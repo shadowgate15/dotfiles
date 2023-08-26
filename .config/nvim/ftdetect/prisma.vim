@@ -1,1 +1,1 @@
-au BufRead,BufNewFile *.prisma
+au BufRead,BufNewFile *.prisma setfiletype prisma
