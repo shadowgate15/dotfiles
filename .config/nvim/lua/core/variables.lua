@@ -1,0 +1,2 @@
+-- mapleader
+vim.g.mapleader = ' '

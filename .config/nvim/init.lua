@@ -1,0 +1,5 @@
+require('core.variables')
+require('core.options')
+require('core.mappings')
+require('core.ui')
+require('core.plugins')
