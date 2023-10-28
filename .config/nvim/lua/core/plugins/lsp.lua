@@ -63,6 +63,11 @@ masonLspConfig.setup_handlers({
       },
     })
   end,
+  ['volar'] = function()
+    lspconfig.volar.setup({
+      filetypes = { 'typescript', 'javascript', 'javascriptreact', 'typescriptreact', 'vue', 'json' },
+    })
+  end,
 })
 
 -- Global mappings.
