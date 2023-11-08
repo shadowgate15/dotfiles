@@ -115,6 +115,9 @@ require('packer').startup(function(use)
       -- https://github.com/onsails/lspkind.nvim
       'onsails/lspkind.nvim',
     },
+
+    -- https://github.com/stevearc/aerial.nvim
+    use('stevearc/aerial.nvim'),
   })
 
   -- Automatically set up your configuration after cloning packer.nvim
