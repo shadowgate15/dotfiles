@@ -14,8 +14,12 @@ require('nvim-treesitter.configs').setup({
   indent = {
     enable = true,
   },
-  context_commentstring = {
-    enable = true,
+})
+
+-- https://github.com/JoosepAlviste/nvim-ts-context-commentstring/issues/82
+require('nvim-treesitter.configs').setup({
+  languages = {
+    typescript = '// %s',
   },
 })
 

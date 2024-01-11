@@ -118,6 +118,14 @@ require('packer').startup(function(use)
 
     -- https://github.com/stevearc/aerial.nvim
     use('stevearc/aerial.nvim'),
+
+    -- https://github.com/iamcco/markdown-preview.nvim
+    use({
+      'iamcco/markdown-preview.nvim',
+      run = function()
+        vim.fn['mkdp#util#install']()
+      end,
+    }),
   })
 
   -- Automatically set up your configuration after cloning packer.nvim
