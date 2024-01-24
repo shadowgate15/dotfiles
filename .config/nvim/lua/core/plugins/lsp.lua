@@ -68,6 +68,32 @@ masonLspConfig.setup_handlers({
       filetypes = { 'typescript', 'javascript', 'javascriptreact', 'typescriptreact', 'vue', 'json' },
     })
   end,
+  ['efm'] = function()
+    local prettier = require('efmls-configs.formatters.prettier')
+
+    -- Supported languages and formatters
+    -- https://github.com/creativenull/efmls-configs-nvim/blob/main/doc/SUPPORTED_LIST.md
+    local languages = vim.tbl_extend('force', require('efmls-configs.defaults').languages(), {
+      json = { prettier },
+      jsonc = { prettier },
+      rust = { require('efmls-configs.formatters.rustfmt') },
+      terraform = { require('efmls-configs.formatters.terraform_fmt') },
+      yaml = { prettier },
+      zsh = { require('efmls-configs.formatters.beautysh') },
+    })
+
+    lspconfig.efm.setup({
+      filetypes = vim.tbl_keys(languages),
+      settings = {
+        rootMarkers = { '.git/' },
+        languages = languages,
+      },
+      init_options = {
+        documentFormatting = true,
+        documentRangeFormatting = true,
+      },
+    })
+  end,
 })
 
 -- Global mappings.
@@ -105,5 +131,20 @@ vim.api.nvim_create_autocmd('LspAttach', {
     vim.keymap.set('n', '<leader>f', function()
       vim.lsp.buf.format({ async = true })
     end, opts)
+  end,
+})
+
+local lsp_fmt_group = vim.api.nvim_create_augroup('LspFormattingGroup', {})
+
+vim.api.nvim_create_autocmd('BufWritePost', {
+  group = lsp_fmt_group,
+  callback = function(ev)
+    local efm = vim.lsp.get_active_clients({ name = 'efm', bufnr = ev.buf })
+
+    if vim.tbl_isempty(efm) then
+      return
+    end
+
+    vim.lsp.buf.format({ name = 'efm' })
   end,
 })

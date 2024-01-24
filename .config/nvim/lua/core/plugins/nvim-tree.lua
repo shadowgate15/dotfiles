@@ -89,8 +89,17 @@ nvim_tree.setup({
       enable = true,
     },
   },
+  -- https://github.com/nvim-tree/nvim-tree.lua/issues/2438
+  filesystem_watchers = {
+    enable = true,
+    debounce_delay = 50,
+    ignore_dirs = {
+      'node_modules',
+    },
+  },
   filters = {
     dotfiles = true,
+    git_ignored = true,
   },
   live_filter = {
     prefix = '[FILTER]: ',

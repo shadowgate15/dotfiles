@@ -18,9 +18,6 @@ require('packer').startup(function(use)
   -- https://github.com/EdenEast/nightfox.nvim
   use('EdenEast/nightfox.nvim')
 
-  -- https://github.com/mhartington/formatter.nvim
-  use('mhartington/formatter.nvim')
-
   -- https://github.com/nvim-treesitter/nvim-treesitter
   use({
     'nvim-treesitter/nvim-treesitter',
@@ -85,6 +82,13 @@ require('packer').startup(function(use)
       -- https://github.com/neovim/nvim-lspconfig
       'neovim/nvim-lspconfig',
     },
+  })
+
+  -- efm-defaults
+  -- https://github.com/creativenull/efmls-configs-nvim
+  use({
+    'creativenull/efmls-configs-nvim',
+    requires = { 'neovim/nvim-lspconfig' },
   })
 
   -- cmp setup
