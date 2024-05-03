@@ -1,3 +1,6 @@
+local mason_registry = require('mason-registry')
+local utils = require('utils')
+
 require('mason').setup()
 
 local global_capabilities = vim.lsp.protocol.make_client_capabilities()
@@ -70,6 +73,7 @@ masonLspConfig.setup_handlers({
   end,
   ['efm'] = function()
     local prettier = require('efmls-configs.formatters.prettier')
+    local cspell = require('efmls-configs.linters.cspell')
 
     -- Supported languages and formatters
     -- https://github.com/creativenull/efmls-configs-nvim/blob/main/doc/SUPPORTED_LIST.md
@@ -80,6 +84,9 @@ masonLspConfig.setup_handlers({
       terraform = { require('efmls-configs.formatters.terraform_fmt') },
       yaml = { prettier },
       zsh = { require('efmls-configs.formatters.beautysh') },
+      -- Can add cspell.json at any point to have a list of accepted words
+      -- https://cspell.org/docs/dictionaries-custom/
+      ['='] = { cspell },
     })
 
     lspconfig.efm.setup({
@@ -87,12 +94,31 @@ masonLspConfig.setup_handlers({
       settings = {
         rootMarkers = { '.git/' },
         languages = languages,
+        logFile = vim.fn.stdpath('log') .. '/efm.log',
       },
       init_options = {
         documentFormatting = true,
         documentRangeFormatting = true,
+        codeAction = true,
       },
     })
+  end,
+  ['helm_ls'] = function()
+    local installed_packages = mason_registry.get_installed_package_names()
+
+    if utils.has_value(installed_packages, 'yaml-language-server') then
+      local yaml_ls = mason_registry.get_package('yaml-language-server')
+
+      lspconfig.helm_ls.setup({
+        settings = {
+          ['helm-ls'] = {
+            yamlls = {
+              path = yaml_ls:get_install_path(),
+            },
+          },
+        },
+      })
+    end
   end,
 })
 

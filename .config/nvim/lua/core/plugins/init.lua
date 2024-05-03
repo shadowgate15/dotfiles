@@ -130,6 +130,22 @@ require('packer').startup(function(use)
         vim.fn['mkdp#util#install']()
       end,
     }),
+
+    -- https://github.com/petertriho/nvim-scrollbar
+    use('petertriho/nvim-scrollbar', {
+      requires = {
+        -- https://github.com/kevinhwang91/nvim-hlslens
+        'kevinhwang91/nvim-hlslens',
+      },
+    }),
+
+    -- https://github.com/mfussenegger/nvim-dap
+    use('mfussenegger/nvim-dap', {
+      requires = {
+      -- https://github.com/rcarriga/nvim-dap-ui
+      'rcarriga/nvim-dap-ui'
+    }
+    })
   })
 
   -- Automatically set up your configuration after cloning packer.nvim
