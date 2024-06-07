@@ -1,6 +1,2 @@
-require('core.variables')
-require('core.options')
-require('core.mappings')
-require('core.ui')
-require('core.plugins')
-require('core.functions')
+-- bootstrap lazy.nvim, LazyVim and your plugins
+require("config.lazy")
