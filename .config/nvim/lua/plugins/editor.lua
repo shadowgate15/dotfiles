@@ -7,8 +7,16 @@ return {
       templates = { "core" },
     },
     keys = {
-      { "<leader>r", "<cmd>OverseerRun<cr>" },
-      { "<leader>rt", "<cmd>OverseerToggle<cr>" },
+      { "<leader>or", "<cmd>OverseerRun<cr>" },
+      { "<leader>ot", "<cmd>OverseerToggle<cr>" },
+    },
+  },
+  {
+    "folke/which-key.nvim",
+    opts = {
+      defaults = {
+        ["<leader>o"] = { name = "+overseer" },
+      },
     },
   },
 }
