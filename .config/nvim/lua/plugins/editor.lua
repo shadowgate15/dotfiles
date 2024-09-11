@@ -14,7 +14,7 @@ return {
   {
     "folke/which-key.nvim",
     opts = {
-      defaults = {
+      spec = {
         ["<leader>o"] = { name = "+overseer" },
       },
     },
@@ -38,7 +38,7 @@ return {
   {
     "folke/which-key.nvim",
     opts = {
-      defaults = {
+      spec = {
         ["<leader>w"] = { name = "+windows/workspaces" },
       },
     },

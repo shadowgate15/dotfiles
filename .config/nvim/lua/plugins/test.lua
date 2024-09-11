@@ -7,8 +7,22 @@ return {
     opts = {
       adapters = {
         ["neotest-jest"] = {
-          jestCommand = "yarn test",
+          jestCommand = function () 
+            local nx_cmd = require('nx.neotest').jest_command()
+
+            if nx_cmd then
+              return nx_cmd
+            end
+
+            return "yarn test"
+          end,
           jestConfigFile = function(file)
+            local nx_config = require('nx.neotest').jest_config_file(file)
+
+            if nx_config then
+              return nx_config
+            end
+
             -- Handle non-Nx workspaces
             if string.find(file, "/packages/") then
               return string.match(file, "(.-/[^/]+/)src") .. "jest.config.ts"
@@ -17,6 +31,12 @@ return {
             return vim.fn.getcwd() .. "/jest.config.ts"
           end,
           cwd = function(file)
+            local nx_cwd = require('nx.neotest').get_cwd()
+
+            if nx_cwd then
+              return nx_cwd
+            end
+
             if string.find(file, "/packages/") then
               return string.match(file, "(.-/[^/]+/)src")
             end
