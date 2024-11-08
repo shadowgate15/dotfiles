@@ -1,0 +1,35 @@
+{
+  "Object mapping builder function": {
+    "prefix": ["ombf", "objectMappingBuilderFunction"],
+    "body": [
+      "/**",
+      "* Map the $1 property",
+      "*",
+      "* config",
+      "*  @default $2",
+      "*",
+      "* @returns The builder",
+      "*/",
+      "$1(config: AddConfigConfig = '$2') {",
+      "  return this.addConfig('$1', config)",
+      "}$0"
+    ]
+  },
+
+  "Object mapping builder anonymous function": {
+    "prefix": ["ombaf", "objectMappingBuilderAnonymousFunction"],
+    "body": [
+      "/**",
+      "* Map the $1 property",
+      "*",
+      "* config",
+      "*  @default $2",
+      "*",
+      "* @returns The builder",
+      "*/",
+      "$1 = (config: AddConfigConfig = '$2') => {",
+      "  return this.addConfig('$1', config)",
+      "}$0"
+    ]
+  }
+}
