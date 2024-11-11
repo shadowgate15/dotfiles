@@ -7,8 +7,8 @@ return {
     opts = {
       adapters = {
         ["neotest-jest"] = {
-          jestCommand = function () 
-            local nx_cmd = require('nx.neotest').jest_command()
+          jestCommand = function()
+            local nx_cmd = require("nx..neotest").jest_command()
 
             if nx_cmd then
               return nx_cmd
@@ -17,7 +17,7 @@ return {
             return "yarn test"
           end,
           jestConfigFile = function(file)
-            local nx_config = require('nx.neotest').jest_config_file(file)
+            local nx_config = require("nx.neotest").jest_config_file(file)
 
             if nx_config then
               return nx_config
@@ -31,7 +31,7 @@ return {
             return vim.fn.getcwd() .. "/jest.config.ts"
           end,
           cwd = function(file)
-            local nx_cwd = require('nx.neotest').get_cwd()
+            local nx_cwd = require("nx.neotest").get_cwd()
 
             if nx_cwd then
               return nx_cwd

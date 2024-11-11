@@ -4,8 +4,7 @@ return {
     dependencies = {
       "stevearc/overseer.nvim",
     },
-    name = "nx",
-    -- dir = "~/Documents/projects/nx.nvim",
+    -- name = "nx",
     opts = {},
   },
 }

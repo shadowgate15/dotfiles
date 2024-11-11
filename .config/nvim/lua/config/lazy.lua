@@ -51,4 +51,8 @@ require("lazy").setup({
       },
     },
   },
+  dev = {
+    path = "~/Documents/projects",
+    patterns = {},
+  },
 })
