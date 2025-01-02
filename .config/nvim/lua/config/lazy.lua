@@ -53,6 +53,8 @@ require("lazy").setup({
   },
   dev = {
     path = "~/Documents/projects",
-    patterns = {},
+    patterns = {
+      -- "shadowgate15/nx.nvim"
+    },
   },
 })

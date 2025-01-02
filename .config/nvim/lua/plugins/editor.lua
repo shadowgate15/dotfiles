@@ -8,6 +8,7 @@ return {
     },
     keys = {
       { "<leader>or", "<cmd>OverseerRun<cr>", { desc = "Run Overseer" } },
+      { "<leader>oc", "<cmd>OverseerRunCmd<cr>", { desc = "Run Overseer CMD" } },
       { "<leader>ot", "<cmd>OverseerToggle<cr>", { desc = "Toogle Overseer" } },
     },
   },
@@ -40,6 +41,35 @@ return {
     opts = {
       spec = {
         ["<leader>w"] = { name = "+windows/workspaces" },
+      },
+    },
+  },
+  {
+    "folke/flash.nvim",
+    keys = {
+      {
+        "<leader>k",
+        mode = { "n", "x", "o" },
+        function()
+          require("flash").jump({
+            search = { forward = false, wrap = false, mutli_window = false, mode = "search", max_length = 0 },
+            label = { after = { 0, 0 } },
+            pattern = "^",
+          })
+        end,
+        { desc = "Flash Up Lines" },
+      },
+      {
+        "<leader>j",
+        mode = { "n", "x", "o" },
+        function()
+          require("flash").jump({
+            search = { forward = true, wrap = false, mutli_window = false, mode = "search", max_length = 0 },
+            label = { after = { 0, 0 } },
+            pattern = "^",
+          })
+        end,
+        { desc = "Flash Down Lines" },
       },
     },
   },

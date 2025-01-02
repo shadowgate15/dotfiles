@@ -3,3 +3,9 @@
 -- Add any additional options here
 
 vim.opt.relativenumber = false
+
+vim.filetype.add({
+  extension = {
+    log = "log",
+  },
+})
