@@ -14,9 +14,7 @@ plug "ptavares/zsh-direnv"
 
 export VI_MODE_ESC_INSERT="jj" && plug "zap-zsh/vim"
 
-export NVM_LAZY_LOAD_EXTRA_COMMANDS=('nvim') && \
-  export NVM_COMPLETION=true && \
-  export NVM_LAZY_LOAD=true && \
+export NVM_COMPLETION=true && \
   export NVM_NO_USE=true && \
   export NVM_AUTO_USE=true && \
   plug "lukechilds/zsh-nvm"
