@@ -21,7 +21,10 @@ return {
               return client == "vtsls"
             end,
           },
-          opts = { timeout = 5000 },
+          opts = {
+            -- 1 minute timeout
+            timeout = 1 * 60 * 1000,
+          },
         },
       },
     },
