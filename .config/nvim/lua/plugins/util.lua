@@ -25,6 +25,7 @@ return {
             kind = "progress",
             cond = function(message)
               local client = vim.tbl_get(message.opts, "progress", "client")
+
               return client == "vtsls"
             end,
           },
