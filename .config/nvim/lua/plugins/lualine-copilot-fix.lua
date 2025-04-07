@@ -3,6 +3,7 @@ return {
   {
     "zbirenbaum/copilot.lua",
     opts = function()
+      ---@diagnostic disable-next-line: inject-field
       require("copilot.api").status = require("copilot.status")
     end,
   },
