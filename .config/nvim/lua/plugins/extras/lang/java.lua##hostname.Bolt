@@ -6,10 +6,10 @@ return {
       return LazyVim.has_extra("lang.java")
     end,
     opts = function(_, opts)
-      table.insert(
-        opts.cmd,
-        string.format("--java-executable=%s", "/Library/Java/JavaVirtualMachines/temurin-24.jdk/Contents/Home/bin/java")
-      )
+      -- table.insert(
+      --   opts.cmd,
+      --   string.format("--java-executable=%s", "/Library/Java/JavaVirtualMachines/temurin-24.jdk/Contents/Home/bin/java")
+      -- )
 
       return opts
     end,

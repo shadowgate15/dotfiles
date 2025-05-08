@@ -1,0 +1,23 @@
+return {
+  {
+    "neovim/nvim-lspconfig",
+    enabled = function()
+      return LazyVim.has_extra("lang.kotlin")
+    end,
+    opts = {
+      servers = {
+        kotlin_language_server = {
+          settings = {
+            kotlin = {
+              compiler = {
+                jvm = {
+                  target = "21",
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+}
