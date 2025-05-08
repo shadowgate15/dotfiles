@@ -5,3 +5,7 @@
 # *.[oa]
 # *~
 *lazy-lock.json
+# yadm-auto-excludes
+# This section is managed by yadm.
+# Any edits below will be lost.
+

@@ -1,10 +1,18 @@
--- This is a map of paths to their corresponding project specifications.
-local pathMap = require("plugins.project.path-map")
+local function try_get_path_map()
+  local ok, val = pcall(require, "plugins.project.path-map")
+
+  if ok then
+    return val
+  end
+
+  return {}
+end
 
 local cwd = LazyVim.root.cwd()
+local pathMap = try_get_path_map()
 
 if vim.tbl_contains(pathMap, cwd) then
-  return require(pathMap[cwd])
+  return require("plugins.project." .. pathMap[cwd])
 end
 
 return {}
