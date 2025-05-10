@@ -11,7 +11,7 @@ end
 local cwd = LazyVim.root.cwd()
 local pathMap = try_get_path_map()
 
-if vim.tbl_contains(pathMap, cwd) then
+if pathMap[cwd] then
   return require("plugins.project." .. pathMap[cwd])
 end
 
