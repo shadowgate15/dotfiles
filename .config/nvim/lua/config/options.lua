@@ -9,3 +9,17 @@ vim.filetype.add({
     log = "log",
   },
 })
+
+vim.filetype.add({
+  filename = {
+    ["project.json"] = function(path, _bufnr)
+      local nxFile = vim.fn.findfile("nx.json", ".")
+
+      if nxFile ~= "" then
+        return "jsonc"
+      end
+
+      return "json"
+    end,
+  },
+})
