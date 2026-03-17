@@ -21,7 +21,7 @@ require("lazy").setup(
       { import = "lazyvim.plugins.extras.editor.dial" },
       { import = "lazyvim.plugins.extras.editor.inc-rename" },
       { import = "lazyvim.plugins.extras.lsp.neoconf" },
-      { import = "lazyvim.plugins.extras.lsp.none-ls" },
+      -- { import = "lazyvim.plugins.extras.lsp.none-ls" },
       { import = "lazyvim.plugins.extras.ui.mini-animate" },
       { import = "lazyvim.plugins.extras.ui.treesitter-context" },
       { import = "lazyvim.plugins.extras.util.dot" },
@@ -59,9 +59,9 @@ require("lazy").setup(
       },
     },
     dev = {
-      path = "~/Documents/projects",
+      path = "~/Projects",
       patterns = {
-        -- "shadowgate15/nx.nvim"
+        --"shadowgate15/nx.nvim",
       },
     },
   }

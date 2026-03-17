@@ -1,4 +1,8 @@
 local function enabled()
+  if LazyVim == nil then
+    return false
+  end
+
   return LazyVim.has_extra("lang.kotlin")
 end
 

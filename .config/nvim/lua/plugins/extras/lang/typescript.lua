@@ -4,6 +4,10 @@ return {
   {
     "neovim/nvim-lspconfig",
     enabled = function()
+      if LazyVim == nil then
+        return false
+      end
+
       return LazyVim.has_extra("lang.typescript")
     end,
     opts = {
