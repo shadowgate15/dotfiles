@@ -1,0 +1,270 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# GitHub tracker adapter: the sole place `gh` is invoked from ralph-issues.
+# Every operation below shells out to the `gh` CLI exclusively — no raw
+# REST/GraphQL calls outside of `gh api`. See ../README.md for the
+# subcommand interface this exposes to orchestration code.
+
+usage() {
+  cat <<'EOF'
+Usage: github-adapter <subcommand> [args...]
+
+Subcommands:
+  frontier-input <owner/repo> <parent-issue>
+      Print a JSON object in the shape lib/frontier-query expects,
+      listing <parent-issue>'s open sub-issues in tracker-native order
+      and resolving each one's blocked/assigned state. Uses GitHub's
+      native sub-issue data when populated; otherwise reconstructs the
+      same shape from a checklist + "Part of #<parent>" marker.
+
+  title <owner/repo> <issue>
+      Print an issue's title.
+
+  claim <owner/repo> <issue>
+      Assign an issue to the authenticated `gh` user.
+
+  comment <owner/repo> <issue> <body>
+      Post a comment on an issue.
+
+  close <owner/repo> <issue> [<closing-comment>]
+      Close an issue, optionally posting a comment first.
+
+  label <owner/repo> <issue> <label>
+      Add a label to an issue (e.g. to flag it for human follow-up).
+EOF
+}
+
+fail() {
+  echo "Error: $1" >&2
+  usage >&2
+  exit 1
+}
+
+require_gh() {
+  command -v gh >/dev/null 2>&1 || fail "the \`gh\` CLI is required but was not found on PATH."
+}
+
+is_owner_slash_repo() {
+  [[ "$1" =~ ^[^/]+/[^/]+$ ]]
+}
+
+is_issue_number() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+# Reads newline-separated values on stdin into the named array (skipping
+# blank lines), avoiding a repeated `while read` block at each call site.
+read_lines_into_array() {
+  local -n _target="$1"
+  local line
+  while IFS= read -r line; do
+    if [[ -n "${line}" ]]; then
+      _target+=("${line}")
+    fi
+  done
+}
+
+# ---- frontier-input: native shape -----------------------------------------
+
+native_sub_issues() {
+  local repo="$1" parent="$2"
+  gh api "repos/${repo}/issues/${parent}/sub_issues" \
+    --jq '[.[] | {number, state, blocked_by: (.issue_dependencies_summary.blocked_by // 0), assignees: [.assignees[].login]}]'
+}
+
+build_native_frontier_input() {
+  local sub_issues_raw="$1"
+  jq -c '{shape: "native", sub_issues: [.[] | select(.state == "open") | {number, blocked_by, assignees}]}' \
+    <<<"${sub_issues_raw}"
+}
+
+# ---- frontier-input: checklist + "Part of #<parent>" fallback ------------
+
+checklist_candidate_numbers() {
+  local parent_body="$1"
+  { grep -E '^\s*-\s*\[[ xX]\]' <<<"${parent_body}" || true; } \
+    | { grep -oE '#[0-9]+' || true; } \
+    | sed 's/#//' \
+    | awk '!seen[$0]++'
+}
+
+blocked_by_numbers_from_body() {
+  local body="$1"
+  grep -iE '^Blocked by:' <<<"${body}" | grep -oE '#[0-9]+' | sed 's/#//' || true
+}
+
+json_number_array() {
+  # Reads newline-separated integers on stdin, prints a JSON array.
+  jq -R 'select(length > 0) | tonumber' | jq -s '.'
+}
+
+build_checklist_frontier_input() {
+  local repo="$1" parent="$2"
+  local parent_body
+  parent_body="$(gh issue view "${parent}" --repo "${repo}" --json body --jq '.body // ""')"
+
+  local -a candidates=()
+  read_lines_into_array candidates < <(checklist_candidate_numbers "${parent_body}")
+
+  local -a qualifying=()
+  declare -A issue_state
+  declare -A issue_assignees_json
+  declare -A issue_blocked_by_json
+  local -a all_referenced=()
+
+  local n
+  for n in "${candidates[@]}"; do
+    [[ -n "${n}" ]] || continue
+    local cinfo cbody
+    cinfo="$(gh issue view "${n}" --repo "${repo}" --json body,state,assignees \
+      --jq '{body, state, assignees: [.assignees[].login]}')"
+    cbody="$(jq -r '.body // ""' <<<"${cinfo}")"
+
+    grep -qE "Part of #${parent}([^0-9]|\$)" <<<"${cbody}" || continue
+
+    local state
+    state="$(jq -r '.state' <<<"${cinfo}")"
+    [[ "${state}" == "OPEN" || "${state}" == "open" ]] || continue
+
+    qualifying+=("${n}")
+    issue_state["${n}"]="${state}"
+    issue_assignees_json["${n}"]="$(jq -c '.assignees' <<<"${cinfo}")"
+
+    local -a blockers=()
+    read_lines_into_array blockers < <(blocked_by_numbers_from_body "${cbody}")
+    issue_blocked_by_json["${n}"]="$(printf '%s\n' "${blockers[@]}" | json_number_array)"
+
+    all_referenced+=("${n}")
+    all_referenced+=("${blockers[@]}")
+  done
+
+  local -a uniq_referenced=()
+  read_lines_into_array uniq_referenced < <(printf '%s\n' "${all_referenced[@]}" | awk '!seen[$0]++')
+
+  local -a open_issues=()
+  local r
+  for r in "${uniq_referenced[@]}"; do
+    local state="${issue_state[${r}]:-}"
+    if [[ -z "${state}" ]]; then
+      state="$(gh issue view "${r}" --repo "${repo}" --json state --jq '.state')"
+    fi
+    if [[ "${state}" == "OPEN" || "${state}" == "open" ]]; then
+      open_issues+=("${r}")
+    fi
+  done
+
+  local checklist_order_json open_issues_json issues_json
+  checklist_order_json="$(printf '%s\n' "${qualifying[@]}" | json_number_array)"
+  open_issues_json="$(printf '%s\n' "${open_issues[@]}" | json_number_array)"
+
+  issues_json="{}"
+  for n in "${qualifying[@]}"; do
+    local entry
+    entry="$(jq -n \
+      --argjson blocked_by "${issue_blocked_by_json[${n}]:-[]}" \
+      --argjson assignees "${issue_assignees_json[${n}]:-[]}" \
+      '{blocked_by: $blocked_by, assignees: $assignees}')"
+    issues_json="$(jq --arg k "${n}" --argjson v "${entry}" '. + {($k): $v}' <<<"${issues_json}")"
+  done
+
+  jq -n -c \
+    --argjson checklist_order "${checklist_order_json}" \
+    --argjson issues "${issues_json}" \
+    --argjson open_issues "${open_issues_json}" \
+    '{shape: "checklist", checklist_order: $checklist_order, issues: $issues, open_issues: $open_issues}'
+}
+
+cmd_frontier_input() {
+  local repo="${1:-}" parent="${2:-}"
+  [[ -n "${repo}" && -n "${parent}" ]] || fail "frontier-input requires <owner/repo> <parent-issue>"
+  is_owner_slash_repo "${repo}" || fail "invalid <owner/repo> value '${repo}'"
+  is_issue_number "${parent}" || fail "invalid parent issue number '${parent}'"
+
+  local sub_issues_raw
+  sub_issues_raw="$(native_sub_issues "${repo}" "${parent}")"
+
+  if [[ "$(jq 'length' <<<"${sub_issues_raw}")" -gt 0 ]]; then
+    build_native_frontier_input "${sub_issues_raw}"
+  else
+    build_checklist_frontier_input "${repo}" "${parent}"
+  fi
+}
+
+# ---- remaining adapter operations -----------------------------------------
+
+cmd_title() {
+  local repo="${1:-}" issue="${2:-}"
+  [[ -n "${repo}" && -n "${issue}" ]] || fail "title requires <owner/repo> <issue>"
+  is_owner_slash_repo "${repo}" || fail "invalid <owner/repo> value '${repo}'"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  gh issue view "${issue}" --repo "${repo}" --json title --jq '.title'
+}
+
+cmd_claim() {
+  local repo="${1:-}" issue="${2:-}"
+  [[ -n "${repo}" && -n "${issue}" ]] || fail "claim requires <owner/repo> <issue>"
+  is_owner_slash_repo "${repo}" || fail "invalid <owner/repo> value '${repo}'"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  gh issue edit "${issue}" --repo "${repo}" --add-assignee @me
+}
+
+cmd_comment() {
+  local repo="${1:-}" issue="${2:-}" body="${3:-}"
+  [[ -n "${repo}" && -n "${issue}" && -n "${body}" ]] || fail "comment requires <owner/repo> <issue> <body>"
+  is_owner_slash_repo "${repo}" || fail "invalid <owner/repo> value '${repo}'"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  gh issue comment "${issue}" --repo "${repo}" --body "${body}"
+}
+
+cmd_close() {
+  local repo="${1:-}" issue="${2:-}" body="${3:-}"
+  [[ -n "${repo}" && -n "${issue}" ]] || fail "close requires <owner/repo> <issue> [<closing-comment>]"
+  is_owner_slash_repo "${repo}" || fail "invalid <owner/repo> value '${repo}'"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  if [[ -n "${body}" ]]; then
+    gh issue close "${issue}" --repo "${repo}" --comment "${body}"
+  else
+    gh issue close "${issue}" --repo "${repo}"
+  fi
+}
+
+cmd_label() {
+  local repo="${1:-}" issue="${2:-}" label="${3:-}"
+  [[ -n "${repo}" && -n "${issue}" && -n "${label}" ]] || fail "label requires <owner/repo> <issue> <label>"
+  is_owner_slash_repo "${repo}" || fail "invalid <owner/repo> value '${repo}'"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  gh issue edit "${issue}" --repo "${repo}" --add-label "${label}"
+}
+
+main() {
+  local sub="${1:-}"
+
+  if [[ -z "${sub}" ]]; then
+    usage >&2
+    exit 1
+  fi
+  if [[ "${sub}" == "-h" || "${sub}" == "--help" ]]; then
+    usage
+    exit 0
+  fi
+  shift
+
+  require_gh
+
+  case "${sub}" in
+    frontier-input) cmd_frontier_input "$@" ;;
+    title) cmd_title "$@" ;;
+    claim) cmd_claim "$@" ;;
+    comment) cmd_comment "$@" ;;
+    close) cmd_close "$@" ;;
+    label) cmd_label "$@" ;;
+    *) fail "unknown subcommand '${sub}'" ;;
+  esac
+}
+
+# Guarded so bats can `source` this file to unit-test the pure helpers
+# above (e.g. checklist_candidate_numbers) without triggering a `gh` call.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

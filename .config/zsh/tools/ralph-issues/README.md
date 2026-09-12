@@ -3,9 +3,10 @@
 Unattended sub-issue-by-sub-issue Claude Code runner for a parent GitHub issue.
 See issue #1 in this repo for the full design.
 
-This is currently scaffolding (issue #2) plus the frontier-query ordering
-function (issue #3). No tracker, git worktree, or Claude Code invocation
-logic exists yet.
+This currently covers scaffolding (issue #2), the frontier-query ordering
+function (issue #3), and the GitHub tracker adapter + "what's next" vertical
+slice (issue #4). Git worktree lifecycle and Claude Code invocation logic
+don't exist yet.
 
 ## Usage
 
@@ -14,6 +15,33 @@ ralph-issues <parent-issue-number> [--repo <owner/repo>]
 ```
 
 `--repo` defaults to the current checkout's repo, inferred from `git remote -v`.
+It prints the next ready sub-issue (the first one with no open blocker and no
+assignee), or says clearly that none are ready.
+
+## `lib/github-adapter`
+
+The only place `gh` is invoked from ralph-issues. Orchestration code (the
+`ralph-issues` CLI, and future outer/inner-loop logic) calls only this
+adapter's subcommand interface, never `gh` directly — a future non-GitHub
+tracker could be added as a sibling adapter behind the same interface without
+touching orchestration logic.
+
+```sh
+github-adapter frontier-input <owner/repo> <parent-issue>   # -> lib/frontier-query's input JSON
+github-adapter title <owner/repo> <issue>                   # -> issue title
+github-adapter claim <owner/repo> <issue>                    # assign to @me
+github-adapter comment <owner/repo> <issue> <body>           # post a comment
+github-adapter close <owner/repo> <issue> [<closing-comment>]
+github-adapter label <owner/repo> <issue> <label>             # e.g. flag for human follow-up
+```
+
+`frontier-input` lists a parent's open sub-issues in tracker-native order and
+resolves each one's blocked/assigned state, in the shape `lib/frontier-query`
+expects. It uses GitHub's native sub-issue/dependency data when the parent
+has any populated; otherwise it reconstructs the same shape from the parent
+body's checklist plus each candidate's `Part of #<parent>` marker (and a
+`Blocked by: #<n>, #<n>` line for dependency edges), per this repo's
+`docs/agents/issue-tracker.md` wayfinder convention.
 
 ## `lib/frontier-query`
 
