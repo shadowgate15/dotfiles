@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../lib"
 GITHUB_ADAPTER="${LIB_DIR}/github-adapter"
 FRONTIER_QUERY="${LIB_DIR}/frontier-query"
+WORKTREE="${LIB_DIR}/worktree"
 
 usage() {
   cat <<'EOF'
@@ -103,6 +104,17 @@ main() {
   local next_title
   next_title="$("${GITHUB_ADAPTER}" title "${repo}" "${next_number}")"
   echo "Next: #${next_number} ${next_title}"
+
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "must be run from within a git checkout to create a worktree"
+
+  local worktree_dir worktree_branch
+  worktree_dir="$("${WORKTREE}" create "${repo_root}" "${next_number}")"
+  worktree_branch="$("${WORKTREE}" branch-name "${next_number}")"
+  echo "Worktree: ${worktree_dir} (branch ${worktree_branch})"
+
+  "${GITHUB_ADAPTER}" claim "${repo}" "${next_number}" >/dev/null
+  echo "Claimed #${next_number}"
 }
 
 main "$@"

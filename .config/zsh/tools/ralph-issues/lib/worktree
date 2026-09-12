@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Git worktree lifecycle for ralph-issues: the sole place `git worktree` is
+# invoked from ralph-issues. Orchestration code calls only this script's
+# subcommand interface, never `git worktree` directly.
+
+usage() {
+  cat <<'EOF'
+Usage: worktree <subcommand> [args...]
+
+Subcommands:
+  create <repo-root> <issue-number> [<base-ref>]
+      Create a dedicated, disposable git worktree and branch scoped to
+      <issue-number>, branched from <base-ref> (default: the repo's current
+      HEAD). Prints the worktree's absolute path on stdout. If a worktree
+      already exists for this issue, does nothing and prints its existing
+      path instead of creating a second one.
+
+  path <repo-root> <issue-number>
+      Print the worktree path that would be used for <issue-number>,
+      without creating anything.
+
+  branch-name <issue-number>
+      Print the branch name that would be used for <issue-number>,
+      without creating anything.
+EOF
+}
+
+fail() {
+  echo "Error: $1" >&2
+  usage >&2
+  exit 1
+}
+
+is_issue_number() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+branch_name() {
+  echo "ralph-issues/issue-$1"
+}
+
+worktree_path() {
+  local repo_root="$1" issue="$2"
+  local parent base
+  parent="$(cd "$(dirname "${repo_root}")" && pwd)"
+  base="$(basename "${repo_root}")"
+  echo "${parent}/${base}.ralph-worktrees/issue-${issue}"
+}
+
+cmd_path() {
+  local repo_root="${1:-}" issue="${2:-}"
+  [[ -n "${repo_root}" && -n "${issue}" ]] || fail "path requires <repo-root> <issue-number>"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  worktree_path "${repo_root}" "${issue}"
+}
+
+cmd_branch_name() {
+  local issue="${1:-}"
+  [[ -n "${issue}" ]] || fail "branch-name requires <issue-number>"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  branch_name "${issue}"
+}
+
+cmd_create() {
+  local repo_root="${1:-}" issue="${2:-}" base_ref="${3:-HEAD}"
+  [[ -n "${repo_root}" && -n "${issue}" ]] || fail "create requires <repo-root> <issue-number> [<base-ref>]"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+
+  local branch path
+  branch="$(branch_name "${issue}")"
+  path="$(worktree_path "${repo_root}" "${issue}")"
+
+  if [[ -d "${path}" ]]; then
+    echo "${path}"
+    return 0
+  fi
+
+  mkdir -p "$(dirname "${path}")"
+
+  if git -C "${repo_root}" show-ref --verify --quiet "refs/heads/${branch}"; then
+    git -C "${repo_root}" worktree add --quiet "${path}" "${branch}"
+  else
+    git -C "${repo_root}" worktree add --quiet -b "${branch}" "${path}" "${base_ref}"
+  fi
+
+  echo "${path}"
+}
+
+main() {
+  local sub="${1:-}"
+
+  if [[ -z "${sub}" ]]; then
+    usage >&2
+    exit 1
+  fi
+  if [[ "${sub}" == "-h" || "${sub}" == "--help" ]]; then
+    usage
+    exit 0
+  fi
+  shift
+
+  case "${sub}" in
+    create) cmd_create "$@" ;;
+    path) cmd_path "$@" ;;
+    branch-name) cmd_branch_name "$@" ;;
+    *) fail "unknown subcommand '${sub}'" ;;
+  esac
+}
+
+# Guarded so bats can `source` this file to unit-test pure helpers (e.g.
+# worktree_path) without triggering a `git worktree` call.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

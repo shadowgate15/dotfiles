@@ -4,9 +4,9 @@ Unattended sub-issue-by-sub-issue Claude Code runner for a parent GitHub issue.
 See issue #1 in this repo for the full design.
 
 This currently covers scaffolding (issue #2), the frontier-query ordering
-function (issue #3), and the GitHub tracker adapter + "what's next" vertical
-slice (issue #4). Git worktree lifecycle and Claude Code invocation logic
-don't exist yet.
+function (issue #3), the GitHub tracker adapter + "what's next" vertical
+slice (issue #4), and per-sub-issue git worktree + claim (issue #5). Claude
+Code invocation logic doesn't exist yet.
 
 ## Usage
 
@@ -15,8 +15,30 @@ ralph-issues <parent-issue-number> [--repo <owner/repo>]
 ```
 
 `--repo` defaults to the current checkout's repo, inferred from `git remote -v`.
-It prints the next ready sub-issue (the first one with no open blocker and no
-assignee), or says clearly that none are ready.
+It finds the next ready sub-issue (the first one with no open blocker and no
+assignee), or says clearly that none are ready. When one is ready, it creates
+a dedicated, disposable git worktree and branch scoped to that sub-issue
+(`<lib/worktree>`, below) and claims it via the adapter, so an in-progress or
+abandoned attempt on one sub-issue can never contaminate another's starting
+state. Running the tool again while that sub-issue is still assigned does
+not re-claim it or create a second worktree — the frontier query skips
+assigned issues.
+
+## `lib/worktree`
+
+The only place `git worktree` is invoked from ralph-issues.
+
+```sh
+worktree create <repo-root> <issue-number> [<base-ref>]  # -> worktree path
+worktree path <repo-root> <issue-number>                  # -> worktree path, no side effects
+worktree branch-name <issue-number>                       # -> branch name, no side effects
+```
+
+`create` branches a new `ralph-issues/issue-<n>` branch off `<base-ref>`
+(default: `HEAD`) into a disposable worktree at
+`<repo-root's parent>/<repo-root's basename>.ralph-worktrees/issue-<n>`, sibling
+to the repo so it's outside version control. If a worktree already exists at
+that path, it's reused rather than recreated.
 
 ## `lib/github-adapter`
 
