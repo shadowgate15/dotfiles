@@ -7,3 +7,9 @@ Issues are tracked in GitHub Issues (shadowgate15/dotfiles), via the `gh` CLI. S
 ### Domain docs
 
 Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+## Tools
+
+### ralph-issues
+
+CLI scaffolding in `.config/zsh/tools/ralph-issues`, put on `PATH` by `.config/zsh/core/path.zsh`. Run its tests with `bats .config/zsh/tools/ralph-issues/test`.

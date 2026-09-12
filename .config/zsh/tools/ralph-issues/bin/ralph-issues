@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: ralph-issues <parent-issue-number> [--repo <owner/repo>]
+
+Arguments:
+  <parent-issue-number>  The parent GitHub issue whose sub-issues will be worked.
+
+Options:
+  --repo <owner/repo>    Target repo to operate on. Defaults to the current
+                          checkout's repo, inferred from `git remote -v`.
+  -h, --help             Show this help message.
+EOF
+}
+
+fail() {
+  echo "Error: $1" >&2
+  usage >&2
+  exit 1
+}
+
+is_owner_slash_repo() {
+  [[ "$1" =~ ^[^/]+/[^/]+$ ]]
+}
+
+infer_repo_from_git_remote() {
+  local remote_url
+  remote_url="$(git remote get-url origin 2>/dev/null)" || {
+    echo "Error: could not infer target repo — no \`origin\` git remote found in the current checkout. Pass --repo <owner/repo> instead." >&2
+    exit 1
+  }
+
+  local repo
+  repo="$(echo "${remote_url}" | sed -E 's#^git@github\.com:(.+)\.git$#\1#; s#^https://github\.com/(.+)\.git$#\1#; s#^https://github\.com/(.+)$#\1#')"
+
+  if [[ "${repo}" == "${remote_url}" ]] || ! is_owner_slash_repo "${repo}"; then
+    echo "Error: could not infer target repo from git remote '${remote_url}'. Pass --repo <owner/repo> instead." >&2
+    exit 1
+  fi
+
+  echo "${repo}"
+}
+
+main() {
+  local parent_issue=""
+  local repo_override=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      --repo)
+        [[ $# -ge 2 ]] || fail "--repo requires a value"
+        repo_override="$2"
+        shift 2
+        ;;
+      --repo=*)
+        repo_override="${1#--repo=}"
+        shift
+        ;;
+      -*)
+        fail "unknown option '$1'"
+        ;;
+      *)
+        if [[ -n "${parent_issue}" ]]; then
+          fail "unexpected argument '$1'"
+        fi
+        parent_issue="$1"
+        shift
+        ;;
+    esac
+  done
+
+  [[ -n "${parent_issue}" ]] || fail "missing required <parent-issue-number>"
+  [[ "${parent_issue}" =~ ^[1-9][0-9]*$ ]] || fail "invalid parent issue number '${parent_issue}' — must be a positive integer"
+
+  local repo
+  if [[ -n "${repo_override}" ]]; then
+    is_owner_slash_repo "${repo_override}" || fail "invalid --repo value '${repo_override}' — expected <owner/repo>"
+    repo="${repo_override}"
+  else
+    repo="$(infer_repo_from_git_remote)"
+  fi
+
+  echo "Parent issue: ${parent_issue}"
+  echo "Target repo: ${repo}"
+}
+
+main "$@"

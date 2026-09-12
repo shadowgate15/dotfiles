@@ -2,6 +2,7 @@
 
 export ZSH_CONFIG_PATH="${0:a:h}"
 
+plug "${ZSH_CONFIG_PATH}/core/path.zsh"
 plug "${ZSH_CONFIG_PATH}/core/plugins.zsh"
 plug "${ZSH_CONFIG_PATH}/core/exports.zsh"
 plug "${ZSH_CONFIG_PATH}/core/aliases.zsh"
