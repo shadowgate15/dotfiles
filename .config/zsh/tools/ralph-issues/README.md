@@ -5,10 +5,10 @@ See issue #1 in this repo for the full design.
 
 This currently covers scaffolding (issue #2), the frontier-query ordering
 function (issue #3), the GitHub tracker adapter + "what's next" vertical
-slice (issue #4), per-sub-issue git worktree + claim (issue #5), and the
-headless implement-attempt invocation (issue #6). The independent
-confirmation pass, retry/escalate loop, and outer-loop ceilings don't exist
-yet.
+slice (issue #4), per-sub-issue git worktree + claim (issue #5), the
+headless implement-attempt invocation (issue #6), and the read-only
+confirmation pass (issue #7). The retry/escalate loop and outer-loop
+ceilings don't exist yet.
 
 ## Usage
 
@@ -46,6 +46,34 @@ fully bypassed so an unattended run never stalls waiting on an approval.
 Exits with the invoked session's exit status. Retrying a failed attempt,
 verifying its result, and closing the sub-issue are not this script's job —
 see issues #7 and #8.
+
+## `lib/confirmation-attempt`
+
+A second, independent headless Claude Code invocation in the same worktree,
+with no ability to edit or write any file — the implementing attempt can
+never grade its own homework.
+
+```sh
+confirmation-attempt prompt <base-ref> <issue-number> <issue-title>            # -> the prompt `run` sends, no side effects
+confirmation-attempt run <worktree-dir> <base-ref> <issue-number> <issue-title>  # -> invokes headless Claude Code, prints the verdict
+```
+
+`run` invokes a fresh headless Claude Code session
+(`claude -p --tools Bash,Read,Grep,Glob,Agent,Skill --dangerously-skip-permissions`)
+in `<worktree-dir>`. `--tools` is a hard restriction — Edit, Write, and
+NotebookEdit are never available to the model, regardless of the permission
+bypass, so it cannot mutate the worktree no matter what it decides to do.
+The session discovers and runs the target repo's own test/typecheck
+commands itself (no per-repo configuration), then invokes the `code-review`
+skill's Standards+Spec review against `git diff <base-ref>...HEAD`. Its
+final answer is constrained by `--json-schema` to
+`{"verdict": "pass"|"fail", "reason": "..."}`, which `run` parses and prints
+as `Confirmation: PASS -- <reason>` or `Confirmation: FAIL -- <reason>`.
+Exits 0 only on a "pass" verdict; a reported "fail", a session that errors
+out, or output that doesn't parse as a verdict all exit non-zero — every
+non-pass outcome is treated as "not confirmed". Retrying, escalating, and
+closing the sub-issue based on this verdict are not this script's job — see
+issue #8.
 
 ## `lib/worktree`
 

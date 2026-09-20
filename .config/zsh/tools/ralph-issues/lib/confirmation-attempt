@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Headless confirmation-attempt invocation: a second, independent Claude
+# Code session in a sub-issue's worktree, with no ability to edit or write
+# any file. It discovers and runs the target repo's own test/typecheck
+# commands, invokes the `code-review` skill's Standards+Spec review against
+# the diff between the worktree's base commit and its current head, and
+# reports a single pass/fail verdict back to the orchestrator. Never the
+# same invocation that did the implementing (see lib/implement-attempt) --
+# the implementing attempt can never grade its own homework.
+
+# Hard tool restriction (not just a permission prompt that gets denied):
+# whatever isn't on this list is unavailable to the model, regardless of
+# --dangerously-skip-permissions. No Edit, Write, or NotebookEdit -- Bash is
+# needed to run test/typecheck/git commands, Read/Grep/Glob to inspect the
+# repo, Agent/Skill because the `code-review` skill spawns Standards/Spec
+# sub-agents and is itself invoked via its slash-command form.
+ALLOWED_TOOLS="Bash,Read,Grep,Glob,Agent,Skill"
+
+VERDICT_SCHEMA='{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"reason":{"type":"string"}},"required":["verdict","reason"]}'
+
+usage() {
+  cat <<'EOF'
+Usage: confirmation-attempt <subcommand> [args...]
+
+Subcommands:
+  prompt <base-ref> <issue-number> <issue-title>
+      Print the prompt `run` sends to Claude Code, without invoking
+      anything.
+
+  run <worktree-dir> <base-ref> <issue-number> <issue-title>
+      Invoke a fresh, read-only headless Claude Code session in
+      <worktree-dir>, prompting it to run the repo's test/typecheck
+      commands and the `code-review` skill against the diff between
+      <base-ref> and HEAD. Prints the verdict and reason, and exits 0 if
+      the verdict is "pass", non-zero otherwise (a reported "fail"
+      verdict, or a tooling/parse error -- both are "not confirmed").
+EOF
+}
+
+fail() {
+  echo "Error: $1" >&2
+  usage >&2
+  exit 1
+}
+
+# Like `fail`, but for a runtime/verdict outcome rather than a usage error
+# -- no point dumping usage for e.g. a session that crashed mid-review.
+runtime_fail() {
+  echo "Error: $1" >&2
+  exit "${2:-1}"
+}
+
+is_issue_number() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+require_claude() {
+  command -v claude >/dev/null 2>&1 || fail "the \`claude\` CLI is required but was not found on PATH."
+}
+
+require_jq() {
+  command -v jq >/dev/null 2>&1 || fail "\`jq\` is required but was not found on PATH."
+}
+
+build_prompt() {
+  local base_ref="$1" issue="$2" title="$3"
+  cat <<EOF
+You are the independent confirmation pass for issue #${issue}: "${title}". You are inside the dedicated git worktree for this issue, but you have no ability to edit or write any file here -- your tools are read-only plus command execution via Bash. Do not attempt to fix anything you find; only investigate and report.
+
+Do all of the following:
+
+1. Discover and run this repo's own test suite and, if it has one, its typechecker -- however this repo itself defines them (e.g. package.json scripts, a Makefile, a repo-specific test runner). Do not assume a fixed command; find it from the repo's own tooling/CI configuration.
+2. Invoke the \`code-review\` skill's Standards+Spec review of the diff between ${base_ref} and the current HEAD (i.e. what \`git diff ${base_ref}...HEAD\` shows).
+3. Decide a single verdict: "pass" only if the test suite passes, the typechecker (if any) passes, and the code-review found no hard violation -- a missing/wrong spec requirement, or a documented-standard breach. A judgement-call-only finding (e.g. a baseline code smell) does not by itself fail the verdict. Otherwise, "fail".
+
+Report your final answer as the required structured output, with "reason" a short (under 100 words) summary of what drove the verdict.
+EOF
+}
+
+cmd_prompt() {
+  local base_ref="${1:-}" issue="${2:-}" title="${3:-}"
+  [[ -n "${base_ref}" && -n "${issue}" && -n "${title}" ]] || fail "prompt requires <base-ref> <issue-number> <issue-title>"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  build_prompt "${base_ref}" "${issue}" "${title}"
+}
+
+cmd_run() {
+  local worktree_dir="${1:-}" base_ref="${2:-}" issue="${3:-}" title="${4:-}"
+  [[ -n "${worktree_dir}" && -n "${base_ref}" && -n "${issue}" && -n "${title}" ]] || fail "run requires <worktree-dir> <base-ref> <issue-number> <issue-title>"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  [[ -d "${worktree_dir}" ]] || fail "worktree directory '${worktree_dir}' does not exist"
+
+  local prompt
+  prompt="$(build_prompt "${base_ref}" "${issue}" "${title}")"
+
+  local raw_output
+  raw_output="$(
+    cd "${worktree_dir}"
+    claude -p \
+      --tools "${ALLOWED_TOOLS}" \
+      --dangerously-skip-permissions \
+      --json-schema "${VERDICT_SCHEMA}" \
+      --output-format text \
+      "${prompt}"
+  )" || runtime_fail "the confirmation session exited with an error; no verdict was produced."
+
+  local verdict reason
+  verdict="$(jq -er '.verdict' <<<"${raw_output}" 2>/dev/null)" || runtime_fail "could not parse a verdict from the confirmation session's output: ${raw_output}"
+  reason="$(jq -r '.reason // empty' <<<"${raw_output}")"
+
+  case "${verdict}" in
+    pass)
+      echo "Confirmation: PASS -- ${reason}"
+      return 0
+      ;;
+    fail)
+      echo "Confirmation: FAIL -- ${reason}"
+      return 1
+      ;;
+    *)
+      runtime_fail "confirmation session returned an unrecognized verdict '${verdict}'"
+      ;;
+  esac
+}
+
+main() {
+  local sub="${1:-}"
+
+  if [[ -z "${sub}" ]]; then
+    usage >&2
+    exit 1
+  fi
+  if [[ "${sub}" == "-h" || "${sub}" == "--help" ]]; then
+    usage
+    exit 0
+  fi
+  shift
+
+  require_claude
+  require_jq
+
+  case "${sub}" in
+    prompt) cmd_prompt "$@" ;;
+    run) cmd_run "$@" ;;
+    *) fail "unknown subcommand '${sub}'" ;;
+  esac
+}
+
+# Guarded so bats can `source` this file to unit-test pure helpers (e.g.
+# build_prompt) without triggering a `claude` call.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
