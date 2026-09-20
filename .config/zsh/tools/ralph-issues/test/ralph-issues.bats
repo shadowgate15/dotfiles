@@ -51,6 +51,8 @@ case "\$*" in
     ;;
   "issue edit ${4} --repo ${1} --add-assignee @me")
     ;;
+  "issue close ${4} --repo ${1} --comment"*)
+    ;;
   *)
     echo "fake gh: unhandled invocation: \$*" >&2
     exit 1
@@ -58,9 +60,16 @@ case "\$*" in
 esac
 EOF
   chmod +x "${FAKE_GH_DIR}/gh"
+  # `claude` is invoked twice per sub-issue: once by implement-attempt (plain
+  # args) and once by confirmation-attempt (`--json-schema` present) -- the
+  # latter must report a passing verdict for the pipeline to reach `close`.
   cat >"${FAKE_GH_DIR}/claude" <<'EOF'
 #!/usr/bin/env bash
-echo "fake claude: $*"
+if [[ "$*" == *"--json-schema"* ]]; then
+  echo '{"verdict":"pass","reason":"fake confirmation pass"}'
+else
+  echo "fake claude: $*"
+fi
 EOF
   chmod +x "${FAKE_GH_DIR}/claude"
   PATH="${FAKE_GH_DIR}:${PATH}"
@@ -80,8 +89,8 @@ EOF
   [[ "$output" == *"Worktree: ${GIT_FIXTURE_DIR}.ralph-worktrees/issue-7 (branch ralph-issues/issue-7)"* ]]
   [[ "$output" == *"Claimed #7"* ]]
   [[ "$output" == *"fake claude: -p --dangerously-skip-permissions /implement Implement issue #7:"* ]]
-  [[ "$output" == *"Implement attempt finished for #7"* ]]
-  [ -d "${GIT_FIXTURE_DIR}.ralph-worktrees/issue-7" ]
+  [[ "$output" == *"confirmed and closed"* ]]
+  [ ! -d "${GIT_FIXTURE_DIR}.ralph-worktrees/issue-7" ]
 }
 
 @test "infers the repo from an https git remote" {
@@ -96,7 +105,7 @@ EOF
 
   [ "$status" -eq 0 ]
   [[ "$output" == "Next: #9 Another thing"* ]]
-  [ -d "${GIT_FIXTURE_DIR}.ralph-worktrees/issue-9" ]
+  [[ "$output" == *"confirmed and closed"* ]]
 }
 
 @test "accepts a --repo override instead of inferring from git remote" {
@@ -110,7 +119,30 @@ EOF
 
   [ "$status" -eq 0 ]
   [[ "$output" == "Next: #3 Third thing"* ]]
-  [ -d "${GIT_FIXTURE_DIR}.ralph-worktrees/issue-3" ]
+  [[ "$output" == *"confirmed and closed"* ]]
+}
+
+@test "accepts a --max-attempts override and threads it into the pipeline" {
+  cd "${GIT_FIXTURE_DIR}"
+  setup_fake_gh "some-owner/some-repo" 2 \
+    '[{"number":7,"state":"open","blocked_by":0,"assignees":[]}]' \
+    7 "Do the thing"
+
+  run "${RALPH_ISSUES_BIN}" 2 --max-attempts 1
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"attempt 1/1"* ]]
+  [[ "$output" == *"confirmed and closed"* ]]
+
+  rm -rf "${FAKE_GH_DIR}"
+}
+
+@test "rejects a non-numeric --max-attempts value" {
+  cd "${GIT_FIXTURE_DIR}"
+  run "${RALPH_ISSUES_BIN}" 2 --max-attempts not-a-number
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"max-attempts"* ]]
 }
 
 @test "running again while the sub-issue is still assigned does not re-claim or create a second worktree" {

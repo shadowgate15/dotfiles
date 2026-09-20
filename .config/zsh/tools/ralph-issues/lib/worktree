@@ -24,6 +24,26 @@ Subcommands:
   branch-name <issue-number>
       Print the branch name that would be used for <issue-number>,
       without creating anything.
+
+  discard <repo-root> <issue-number>
+      Remove the disposable worktree for <issue-number> (the branch itself
+      is left alone). Used once a sub-issue's work has been merged into the
+      run's shared integration branch and its worktree is no longer needed.
+
+  integration-branch-name <parent-issue>
+      Print the shared integration branch name that would be used for
+      <parent-issue>, without creating anything.
+
+  integration-path <repo-root> <parent-issue>
+      Print the dedicated worktree path used to merge into <parent-issue>'s
+      shared integration branch, without creating anything.
+
+  create-integration <repo-root> <parent-issue> [<base-ref>]
+      Create the dedicated, persistent worktree and branch used to merge
+      verified sub-issues' work into <parent-issue>'s shared integration
+      branch, branched from <base-ref> (default: the repo's current HEAD).
+      Prints the worktree's absolute path on stdout. If it already exists,
+      does nothing and prints its existing path instead of recreating it.
 EOF
 }
 
@@ -49,6 +69,18 @@ worktree_path() {
   echo "${parent}/${base}.ralph-worktrees/issue-${issue}"
 }
 
+integration_branch_name() {
+  echo "ralph-issues/parent-$1-integration"
+}
+
+integration_worktree_path() {
+  local repo_root="$1" parent="$2"
+  local parent_dir base
+  parent_dir="$(cd "$(dirname "${repo_root}")" && pwd)"
+  base="$(basename "${repo_root}")"
+  echo "${parent_dir}/${base}.ralph-worktrees/parent-${parent}-integration"
+}
+
 cmd_path() {
   local repo_root="${1:-}" issue="${2:-}"
   [[ -n "${repo_root}" && -n "${issue}" ]] || fail "path requires <repo-root> <issue-number>"
@@ -63,14 +95,12 @@ cmd_branch_name() {
   branch_name "${issue}"
 }
 
-cmd_create() {
-  local repo_root="${1:-}" issue="${2:-}" base_ref="${3:-HEAD}"
-  [[ -n "${repo_root}" && -n "${issue}" ]] || fail "create requires <repo-root> <issue-number> [<base-ref>]"
-  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
-
-  local branch path
-  branch="$(branch_name "${issue}")"
-  path="$(worktree_path "${repo_root}" "${issue}")"
+# Creates a worktree at <path> on <branch> (branching off <base_ref> if
+# <branch> doesn't exist yet), reusing an existing worktree at <path>
+# instead of recreating it. Shared by cmd_create and cmd_create_integration,
+# which differ only in how they name <branch> and <path>.
+ensure_worktree() {
+  local repo_root="$1" branch="$2" path="$3" base_ref="$4"
 
   if [[ -d "${path}" ]]; then
     echo "${path}"
@@ -86,6 +116,49 @@ cmd_create() {
   fi
 
   echo "${path}"
+}
+
+cmd_create() {
+  local repo_root="${1:-}" issue="${2:-}" base_ref="${3:-HEAD}"
+  [[ -n "${repo_root}" && -n "${issue}" ]] || fail "create requires <repo-root> <issue-number> [<base-ref>]"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+
+  ensure_worktree "${repo_root}" "$(branch_name "${issue}")" "$(worktree_path "${repo_root}" "${issue}")" "${base_ref}"
+}
+
+cmd_discard() {
+  local repo_root="${1:-}" issue="${2:-}"
+  [[ -n "${repo_root}" && -n "${issue}" ]] || fail "discard requires <repo-root> <issue-number>"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+
+  local path
+  path="$(worktree_path "${repo_root}" "${issue}")"
+
+  [[ -d "${path}" ]] || return 0
+
+  git -C "${repo_root}" worktree remove --force "${path}"
+}
+
+cmd_integration_branch_name() {
+  local parent="${1:-}"
+  [[ -n "${parent}" ]] || fail "integration-branch-name requires <parent-issue>"
+  is_issue_number "${parent}" || fail "invalid parent issue number '${parent}'"
+  integration_branch_name "${parent}"
+}
+
+cmd_integration_path() {
+  local repo_root="${1:-}" parent="${2:-}"
+  [[ -n "${repo_root}" && -n "${parent}" ]] || fail "integration-path requires <repo-root> <parent-issue>"
+  is_issue_number "${parent}" || fail "invalid parent issue number '${parent}'"
+  integration_worktree_path "${repo_root}" "${parent}"
+}
+
+cmd_create_integration() {
+  local repo_root="${1:-}" parent="${2:-}" base_ref="${3:-HEAD}"
+  [[ -n "${repo_root}" && -n "${parent}" ]] || fail "create-integration requires <repo-root> <parent-issue> [<base-ref>]"
+  is_issue_number "${parent}" || fail "invalid parent issue number '${parent}'"
+
+  ensure_worktree "${repo_root}" "$(integration_branch_name "${parent}")" "$(integration_worktree_path "${repo_root}" "${parent}")" "${base_ref}"
 }
 
 main() {
@@ -105,6 +178,10 @@ main() {
     create) cmd_create "$@" ;;
     path) cmd_path "$@" ;;
     branch-name) cmd_branch_name "$@" ;;
+    discard) cmd_discard "$@" ;;
+    integration-branch-name) cmd_integration_branch_name "$@" ;;
+    integration-path) cmd_integration_path "$@" ;;
+    create-integration) cmd_create_integration "$@" ;;
     *) fail "unknown subcommand '${sub}'" ;;
   esac
 }

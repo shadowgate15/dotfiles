@@ -117,3 +117,92 @@ teardown() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown subcommand"* ]]
 }
+
+# discard: removes a sub-issue's worktree once its work is merged, without
+# touching the branch itself.
+
+@test "discard: removes an existing worktree, leaving the branch intact" {
+  "${WORKTREE}" create "${REPO_DIR}" 42
+  local path
+  path="$(dirname "${REPO_DIR}")/some-repo.ralph-worktrees/issue-42"
+  [ -d "${path}" ]
+
+  run "${WORKTREE}" discard "${REPO_DIR}" 42
+
+  [ "$status" -eq 0 ]
+  [ ! -d "${path}" ]
+
+  run git -C "${REPO_DIR}" show-ref --verify --quiet "refs/heads/ralph-issues/issue-42"
+  [ "$status" -eq 0 ]
+}
+
+@test "discard: succeeds as a no-op when no worktree exists for the issue" {
+  run "${WORKTREE}" discard "${REPO_DIR}" 99
+
+  [ "$status" -eq 0 ]
+}
+
+@test "discard: rejects a non-numeric issue number" {
+  run "${WORKTREE}" discard "${REPO_DIR}" not-a-number
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"issue number"* ]]
+}
+
+# integration-branch-name / integration-path: naming conventions for the
+# run's shared integration branch and its dedicated worktree.
+
+@test "integration-branch-name: builds the ralph-issues/parent-<n>-integration convention" {
+  run "${WORKTREE}" integration-branch-name 1
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "ralph-issues/parent-1-integration" ]
+}
+
+@test "integration-branch-name: rejects a non-numeric parent issue number" {
+  run "${WORKTREE}" integration-branch-name not-a-number
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"parent issue number"* ]]
+}
+
+@test "integration-path: builds the sibling .ralph-worktrees/parent-<n>-integration convention" {
+  run "${WORKTREE}" integration-path "${REPO_DIR}" 1
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(dirname "${REPO_DIR}")/some-repo.ralph-worktrees/parent-1-integration" ]
+  [ ! -e "$(dirname "${REPO_DIR}")/some-repo.ralph-worktrees" ]
+}
+
+# create-integration: the dedicated, persistent worktree/branch that
+# verified sub-issue work merges into.
+
+@test "create-integration: creates the shared integration worktree and branch" {
+  run "${WORKTREE}" create-integration "${REPO_DIR}" 1
+
+  [ "$status" -eq 0 ]
+  local expected_path
+  expected_path="$(dirname "${REPO_DIR}")/some-repo.ralph-worktrees/parent-1-integration"
+  [ "$output" = "${expected_path}" ]
+  [ -d "${expected_path}" ]
+
+  run git -C "${REPO_DIR}" show-ref --verify --quiet "refs/heads/ralph-issues/parent-1-integration"
+  [ "$status" -eq 0 ]
+}
+
+@test "create-integration: a second call reuses the existing worktree instead of erroring" {
+  "${WORKTREE}" create-integration "${REPO_DIR}" 1
+
+  run "${WORKTREE}" create-integration "${REPO_DIR}" 1
+
+  [ "$status" -eq 0 ]
+  run git -C "${REPO_DIR}" worktree list
+  [ "$(echo "$output" | grep -c "parent-1-integration")" -eq 1 ]
+}
+
+@test "create-integration: rejects a non-numeric parent issue number" {
+  run "${WORKTREE}" create-integration "${REPO_DIR}" not-a-number
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"parent issue number"* ]]
+}

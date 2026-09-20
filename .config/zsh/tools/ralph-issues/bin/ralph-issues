@@ -6,11 +6,13 @@ LIB_DIR="${SCRIPT_DIR}/../lib"
 GITHUB_ADAPTER="${LIB_DIR}/github-adapter"
 FRONTIER_QUERY="${LIB_DIR}/frontier-query"
 WORKTREE="${LIB_DIR}/worktree"
-IMPLEMENT_ATTEMPT="${LIB_DIR}/implement-attempt"
+SUB_ISSUE_PIPELINE="${LIB_DIR}/sub-issue-pipeline"
+
+DEFAULT_MAX_ATTEMPTS=3
 
 usage() {
   cat <<'EOF'
-Usage: ralph-issues <parent-issue-number> [--repo <owner/repo>]
+Usage: ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>]
 
 Arguments:
   <parent-issue-number>  The parent GitHub issue whose sub-issues will be worked.
@@ -18,6 +20,8 @@ Arguments:
 Options:
   --repo <owner/repo>    Target repo to operate on. Defaults to the current
                           checkout's repo, inferred from `git remote -v`.
+  --max-attempts <n>     Retry ceiling for a sub-issue's implement/confirm
+                          inner loop. Default: 3.
   -h, --help             Show this help message.
 EOF
 }
@@ -53,6 +57,7 @@ infer_repo_from_git_remote() {
 main() {
   local parent_issue=""
   local repo_override=""
+  local max_attempts="${DEFAULT_MAX_ATTEMPTS}"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -67,6 +72,15 @@ main() {
         ;;
       --repo=*)
         repo_override="${1#--repo=}"
+        shift
+        ;;
+      --max-attempts)
+        [[ $# -ge 2 ]] || fail "--max-attempts requires a value"
+        max_attempts="$2"
+        shift 2
+        ;;
+      --max-attempts=*)
+        max_attempts="${1#--max-attempts=}"
         shift
         ;;
       -*)
@@ -84,6 +98,7 @@ main() {
 
   [[ -n "${parent_issue}" ]] || fail "missing required <parent-issue-number>"
   [[ "${parent_issue}" =~ ^[1-9][0-9]*$ ]] || fail "invalid parent issue number '${parent_issue}' — must be a positive integer"
+  [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]] || fail "invalid --max-attempts value '${max_attempts}' — must be a positive integer"
 
   local repo
   if [[ -n "${repo_override}" ]]; then
@@ -109,17 +124,20 @@ main() {
   local repo_root
   repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "must be run from within a git checkout to create a worktree"
 
+  local base_ref
+  base_ref="$(git -C "${repo_root}" rev-parse HEAD)"
+
   local worktree_dir worktree_branch
-  worktree_dir="$("${WORKTREE}" create "${repo_root}" "${next_number}")"
+  worktree_dir="$("${WORKTREE}" create "${repo_root}" "${next_number}" "${base_ref}")"
   worktree_branch="$("${WORKTREE}" branch-name "${next_number}")"
   echo "Worktree: ${worktree_dir} (branch ${worktree_branch})"
 
   "${GITHUB_ADAPTER}" claim "${repo}" "${next_number}" >/dev/null
   echo "Claimed #${next_number}"
 
-  echo "Implementing #${next_number} in ${worktree_dir}..."
-  "${IMPLEMENT_ATTEMPT}" run "${worktree_dir}" "${next_number}" "${next_title}"
-  echo "Implement attempt finished for #${next_number}"
+  echo "Running implement/confirm pipeline for #${next_number} in ${worktree_dir}..."
+  "${SUB_ISSUE_PIPELINE}" run "${repo_root}" "${worktree_dir}" "${base_ref}" "${repo}" \
+    "${parent_issue}" "${next_number}" "${next_title}" "${max_attempts}"
 }
 
 main "$@"

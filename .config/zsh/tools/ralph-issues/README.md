@@ -6,14 +6,16 @@ See issue #1 in this repo for the full design.
 This currently covers scaffolding (issue #2), the frontier-query ordering
 function (issue #3), the GitHub tracker adapter + "what's next" vertical
 slice (issue #4), per-sub-issue git worktree + claim (issue #5), the
-headless implement-attempt invocation (issue #6), and the read-only
-confirmation pass (issue #7). The retry/escalate loop and outer-loop
-ceilings don't exist yet.
+headless implement-attempt invocation (issue #6), the read-only
+confirmation pass (issue #7), and the single sub-issue retry/verify-gated
+close/escalate pipeline (issue #8). The outer loop over multiple sub-issues
+in one run, whole-run ceilings, and the final single pull request don't
+exist yet -- each invocation still works exactly one sub-issue.
 
 ## Usage
 
 ```sh
-ralph-issues <parent-issue-number> [--repo <owner/repo>]
+ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>]
 ```
 
 `--repo` defaults to the current checkout's repo, inferred from `git remote -v`.
@@ -24,8 +26,12 @@ a dedicated, disposable git worktree and branch scoped to that sub-issue
 abandoned attempt on one sub-issue can never contaminate another's starting
 state. Running the tool again while that sub-issue is still assigned does
 not re-claim it or create a second worktree — the frontier query skips
-assigned issues. It then invokes a single headless implement attempt
-(`<lib/implement-attempt>`, below) in that worktree.
+assigned issues. It then hands the sub-issue off to `lib/sub-issue-pipeline`
+(below), which runs the implement/confirm retry loop and closes, merges, or
+escalates it.
+
+`--max-attempts <n>` (default 3) sets the retry ceiling passed through to
+`lib/sub-issue-pipeline`.
 
 ## `lib/implement-attempt`
 
@@ -43,9 +49,10 @@ form. No session id, `--resume`, or `--continue` is ever passed, so every
 call is a wholly new session with no memory of any prior attempt beyond
 what's already committed or present in the worktree. Permission checks are
 fully bypassed so an unattended run never stalls waiting on an approval.
-Exits with the invoked session's exit status. Retrying a failed attempt,
-verifying its result, and closing the sub-issue are not this script's job —
-see issues #7 and #8.
+Exits with the invoked session's exit status, though `lib/sub-issue-pipeline`
+(below) never treats that status as a verdict — retrying a failed attempt,
+verifying its result, and closing the sub-issue are its job, not this
+script's.
 
 ## `lib/confirmation-attempt`
 
@@ -72,8 +79,42 @@ as `Confirmation: PASS -- <reason>` or `Confirmation: FAIL -- <reason>`.
 Exits 0 only on a "pass" verdict; a reported "fail", a session that errors
 out, or output that doesn't parse as a verdict all exit non-zero — every
 non-pass outcome is treated as "not confirmed". Retrying, escalating, and
-closing the sub-issue based on this verdict are not this script's job — see
-issue #8.
+closing the sub-issue based on this verdict are `lib/sub-issue-pipeline`'s
+job (below), not this script's.
+
+## `lib/sub-issue-pipeline`
+
+Wires `lib/implement-attempt` and `lib/confirmation-attempt` into a single
+sub-issue's retry loop, and decides what happens to that sub-issue once the
+loop ends. This is the piece that actually closes, merges, or escalates a
+sub-issue — orchestration code should call this rather than the implement
+and confirmation scripts directly.
+
+```
+sub-issue-pipeline run <repo-root> <worktree-dir> <base-ref> <repo> <parent-issue> <issue-number> <issue-title> [<max-attempts>]
+```
+
+`run` repeats implement-then-confirm in `<worktree-dir>` (reusing the same
+worktree across retries — nothing is recreated between attempts) up to
+`<max-attempts>` times (default 3). The implementing attempt's own exit
+status is never treated as a verdict; only the confirmation attempt's
+pass/fail decides the outcome, so the implementing attempt can never grade
+its own homework.
+
+On a passing confirmation: merges the sub-issue's branch into
+`<parent-issue>`'s shared integration branch (`ralph-issues/parent-<n>-integration`,
+created via `lib/worktree`'s `create-integration` if it doesn't exist yet),
+discards the sub-issue's worktree (`lib/worktree discard`), and only then
+closes the sub-issue via the adapter with a summary comment — in that order,
+so a merge conflict is caught before anything is closed or discarded. If the
+merge itself fails (e.g. a genuine conflict against the integration branch),
+the sub-issue is left open, unclosed, and its worktree/branch untouched, for
+manual resolution.
+
+On exhausting `<max-attempts>` without a pass: posts a comment summarizing
+the last verdict and labels the sub-issue `needs-human` via the adapter,
+leaving its worktree and branch in place rather than discarding them. Exits
+non-zero.
 
 ## `lib/worktree`
 
@@ -83,13 +124,24 @@ The only place `git worktree` is invoked from ralph-issues.
 worktree create <repo-root> <issue-number> [<base-ref>]  # -> worktree path
 worktree path <repo-root> <issue-number>                  # -> worktree path, no side effects
 worktree branch-name <issue-number>                       # -> branch name, no side effects
+worktree discard <repo-root> <issue-number>               # removes the worktree, leaves the branch
+worktree integration-branch-name <parent-issue>           # -> integration branch name, no side effects
+worktree integration-path <repo-root> <parent-issue>      # -> integration worktree path, no side effects
+worktree create-integration <repo-root> <parent-issue> [<base-ref>]  # -> integration worktree path
 ```
 
 `create` branches a new `ralph-issues/issue-<n>` branch off `<base-ref>`
 (default: `HEAD`) into a disposable worktree at
 `<repo-root's parent>/<repo-root's basename>.ralph-worktrees/issue-<n>`, sibling
 to the repo so it's outside version control. If a worktree already exists at
-that path, it's reused rather than recreated.
+that path, it's reused rather than recreated. `discard` removes that
+worktree once a sub-issue is done with it (via `git worktree remove`), but
+never touches the branch itself.
+
+`create-integration` is the same idea for the run's shared integration
+branch (`ralph-issues/parent-<n>-integration`, in a persistent sibling
+worktree at `...ralph-worktrees/parent-<n>-integration`) that
+`lib/sub-issue-pipeline` merges each verified sub-issue's branch into.
 
 ## `lib/github-adapter`
 
