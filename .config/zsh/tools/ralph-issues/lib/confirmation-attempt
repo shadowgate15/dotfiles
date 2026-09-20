@@ -10,16 +10,6 @@ set -euo pipefail
 # same invocation that did the implementing (see lib/implement-attempt) --
 # the implementing attempt can never grade its own homework.
 
-# Hard tool restriction (not just a permission prompt that gets denied):
-# whatever isn't on this list is unavailable to the model, regardless of
-# --dangerously-skip-permissions. No Edit, Write, or NotebookEdit -- Bash is
-# needed to run test/typecheck/git commands, Read/Grep/Glob to inspect the
-# repo, Agent/Skill because the `code-review` skill spawns Standards/Spec
-# sub-agents and is itself invoked via its slash-command form.
-ALLOWED_TOOLS="Bash,Read,Grep,Glob,Agent,Skill"
-
-VERDICT_SCHEMA='{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"reason":{"type":"string"}},"required":["verdict","reason"]}'
-
 usage() {
   cat <<'EOF'
 Usage: confirmation-attempt <subcommand> [args...]
@@ -95,13 +85,24 @@ cmd_run() {
   local prompt
   prompt="$(build_prompt "${base_ref}" "${issue}" "${title}")"
 
+  # Hard tool restriction (not just a permission prompt that gets denied):
+  # whatever isn't on this list is unavailable to the model, regardless of
+  # --dangerously-skip-permissions -- and it propagates to every sub-agent
+  # the session spawns, so the `code-review` skill's Standards/Spec
+  # sub-agents inherit it too. No Edit, Write, or NotebookEdit -- Bash is
+  # needed to run test/typecheck/git commands, Read/Grep/Glob to inspect
+  # the repo, Agent/Skill because `code-review` spawns sub-agents and is
+  # itself invoked via its slash-command form.
+  local allowed_tools="Bash,Read,Grep,Glob,Agent,Skill"
+  local verdict_schema='{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"reason":{"type":"string"}},"required":["verdict","reason"]}'
+
   local raw_output
   raw_output="$(
     cd "${worktree_dir}"
     claude -p \
-      --tools "${ALLOWED_TOOLS}" \
+      --tools "${allowed_tools}" \
       --dangerously-skip-permissions \
-      --json-schema "${VERDICT_SCHEMA}" \
+      --json-schema "${verdict_schema}" \
       --output-format text \
       "${prompt}"
   )" || runtime_fail "the confirmation session exited with an error; no verdict was produced."
