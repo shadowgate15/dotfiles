@@ -36,15 +36,47 @@ teardown() {
   [[ "$output" == *"parent issue number"* ]]
 }
 
+# `claude` is invoked twice per sub-issue: once by implement-attempt (plain
+# args) and once by confirmation-attempt (`--json-schema` present) -- the
+# latter must report a passing verdict for the pipeline to reach `close`.
+# Both invocations request `--output-format json`, so the fake must answer
+# with a full result envelope (`total_cost_usd`, and either `result` or
+# `structured_output`) for implement-attempt/confirmation-attempt to parse.
+# $1: directory to install the fake into
+install_fake_claude() {
+  cat >"$1/claude" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == *"--json-schema"* ]]; then
+  jq -n '{is_error: false, total_cost_usd: 0.05, structured_output: {verdict: "pass", reason: "fake confirmation pass"}, result: "{\"verdict\":\"pass\",\"reason\":\"fake confirmation pass\"}"}'
+else
+  jq -n --arg args "$*" '{is_error: false, total_cost_usd: 0.10, result: ("fake claude: " + $args)}'
+fi
+EOF
+  chmod +x "$1/claude"
+}
+
 setup_fake_gh() {
-  # $1: repo, $2: parent issue, $3: sub_issues JSON (native shape), $4: next issue number, $5: next title
+  # $1: repo, $2: parent issue, $3: sub_issues JSON while open (native
+  #     shape), $4: next issue number, $5: next title
+  #
+  # Stateful: once `issue close <4>` is called, subsequent `sub_issues`
+  # queries report the same entry with state "closed" instead -- mimicking
+  # how the real API keeps a closed sub-issue listed (just no longer
+  # "open") rather than dropping it, so a single ready sub-issue naturally
+  # ends the run on the following iteration instead of being "next" forever.
   FAKE_GH_DIR="$(mktemp -d)"
+  local state_file="${FAKE_GH_DIR}/state"
+  echo "open" >"${state_file}"
   cat >"${FAKE_GH_DIR}/gh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 case "\$*" in
   "api repos/${1}/issues/${2}/sub_issues --jq"*)
-    echo '${3}'
+    if [[ "\$(cat "${state_file}")" == "closed" ]]; then
+      jq -c 'map(.state = "closed")' <<<'${3}'
+    else
+      echo '${3}'
+    fi
     ;;
   "issue view ${4} --repo ${1} --json title --jq .title")
     echo "${5}"
@@ -52,6 +84,7 @@ case "\$*" in
   "issue edit ${4} --repo ${1} --add-assignee @me")
     ;;
   "issue close ${4} --repo ${1} --comment"*)
+    echo "closed" >"${state_file}"
     ;;
   *)
     echo "fake gh: unhandled invocation: \$*" >&2
@@ -60,18 +93,7 @@ case "\$*" in
 esac
 EOF
   chmod +x "${FAKE_GH_DIR}/gh"
-  # `claude` is invoked twice per sub-issue: once by implement-attempt (plain
-  # args) and once by confirmation-attempt (`--json-schema` present) -- the
-  # latter must report a passing verdict for the pipeline to reach `close`.
-  cat >"${FAKE_GH_DIR}/claude" <<'EOF'
-#!/usr/bin/env bash
-if [[ "$*" == *"--json-schema"* ]]; then
-  echo '{"verdict":"pass","reason":"fake confirmation pass"}'
-else
-  echo "fake claude: $*"
-fi
-EOF
-  chmod +x "${FAKE_GH_DIR}/claude"
+  install_fake_claude "${FAKE_GH_DIR}"
   PATH="${FAKE_GH_DIR}:${PATH}"
 }
 
@@ -85,12 +107,18 @@ EOF
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [[ "$output" == "Next: #7 Do the thing"* ]]
+  [[ "$output" == "Now working: #7 Do the thing"* ]]
   [[ "$output" == *"Worktree: ${GIT_FIXTURE_DIR}.ralph-worktrees/issue-7 (branch ralph-issues/issue-7)"* ]]
   [[ "$output" == *"Claimed #7"* ]]
-  [[ "$output" == *"fake claude: -p --dangerously-skip-permissions /implement Implement issue #7:"* ]]
+  [[ "$output" == *"fake claude: -p --dangerously-skip-permissions --output-format json /implement Implement issue #7:"* ]]
   [[ "$output" == *"confirmed and closed"* ]]
   [ ! -d "${GIT_FIXTURE_DIR}.ralph-worktrees/issue-7" ]
+
+  # The outer loop recomputes the frontier after #7 closes, finds nothing
+  # further ready, and terminates naturally with the run's progress summary.
+  [[ "$output" == *"Processed so far:"* ]]
+  [[ "$output" == *"#7 Do the thing -- confirmed and closed"* ]]
+  [[ "$output" == *"No ready sub-issue for parent #2 in some-owner/some-repo"* ]]
 }
 
 @test "infers the repo from an https git remote" {
@@ -104,7 +132,7 @@ EOF
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [[ "$output" == "Next: #9 Another thing"* ]]
+  [[ "$output" == "Now working: #9 Another thing"* ]]
   [[ "$output" == *"confirmed and closed"* ]]
 }
 
@@ -118,7 +146,7 @@ EOF
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [[ "$output" == "Next: #3 Third thing"* ]]
+  [[ "$output" == "Now working: #3 Third thing"* ]]
   [[ "$output" == *"confirmed and closed"* ]]
 }
 
@@ -135,6 +163,139 @@ EOF
   [[ "$output" == *"confirmed and closed"* ]]
 
   rm -rf "${FAKE_GH_DIR}"
+}
+
+# $1: phase-tracking file. Two independent, unblocked sub-issues (#7, #8) --
+# the fake's `sub_issues` response depends on how many have been closed so
+# far (matching the real API, which keeps closed sub-issues listed with
+# state "closed" rather than dropping them), so the outer loop's second and
+# third frontier-query calls see real state changes instead of the same
+# static response forever.
+setup_fake_gh_two_sub_issues() {
+  FAKE_GH_DIR="$(mktemp -d)"
+  local phase_file="${FAKE_GH_DIR}/phase"
+  echo 0 >"${phase_file}"
+  cat >"${FAKE_GH_DIR}/gh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+phase="\$(cat "${phase_file}")"
+case "\$*" in
+  "api repos/some-owner/some-repo/issues/2/sub_issues --jq"*)
+    case "\${phase}" in
+      0) echo '[{"number":7,"state":"open","blocked_by":0,"assignees":[]},{"number":8,"state":"open","blocked_by":0,"assignees":[]}]' ;;
+      1) echo '[{"number":7,"state":"closed","blocked_by":0,"assignees":[]},{"number":8,"state":"open","blocked_by":0,"assignees":[]}]' ;;
+      *) echo '[{"number":7,"state":"closed","blocked_by":0,"assignees":[]},{"number":8,"state":"closed","blocked_by":0,"assignees":[]}]' ;;
+    esac
+    ;;
+  "issue view 7 --repo some-owner/some-repo --json title --jq .title")
+    echo "First thing"
+    ;;
+  "issue view 8 --repo some-owner/some-repo --json title --jq .title")
+    echo "Second thing"
+    ;;
+  "issue edit 7 --repo some-owner/some-repo --add-assignee @me") ;;
+  "issue edit 8 --repo some-owner/some-repo --add-assignee @me") ;;
+  "issue close 7 --repo some-owner/some-repo --comment"*)
+    echo 1 >"${phase_file}"
+    ;;
+  "issue close 8 --repo some-owner/some-repo --comment"*)
+    echo 2 >"${phase_file}"
+    ;;
+  *)
+    echo "fake gh: unhandled invocation: \$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+  chmod +x "${FAKE_GH_DIR}/gh"
+  install_fake_claude "${FAKE_GH_DIR}"
+  PATH="${FAKE_GH_DIR}:${PATH}"
+}
+
+@test "processes two ready sub-issues one at a time, in frontier order, then terminates naturally" {
+  cd "${GIT_FIXTURE_DIR}"
+  setup_fake_gh_two_sub_issues
+
+  run "${RALPH_ISSUES_BIN}" 2
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+
+  # #7 fully processed (worked, closed) strictly before #8 is ever claimed.
+  local first_claimed second_claimed
+  first_claimed="$(grep -n "Claimed #7" <<<"${output}" | head -n1 | cut -d: -f1)"
+  second_claimed="$(grep -n "Claimed #8" <<<"${output}" | head -n1 | cut -d: -f1)"
+  [ -n "${first_claimed}" ]
+  [ -n "${second_claimed}" ]
+  [ "${first_claimed}" -lt "${second_claimed}" ]
+
+  [[ "$output" == *"Now working: #7 First thing"* ]]
+  [[ "$output" == *"Now working: #8 Second thing"* ]]
+  [[ "$output" == *"Processed so far:"* ]]
+  [[ "$output" == *"#7 First thing -- confirmed and closed"* ]]
+  [[ "$output" == *"#8 Second thing -- confirmed and closed"* ]]
+  [[ "$output" == *"No ready sub-issue for parent #2 in some-owner/some-repo"* ]]
+
+  [ ! -d "${GIT_FIXTURE_DIR}.ralph-worktrees/issue-7" ]
+  [ ! -d "${GIT_FIXTURE_DIR}.ralph-worktrees/issue-8" ]
+}
+
+@test "stops cleanly between sub-issues once the wall-clock ceiling is reached" {
+  cd "${GIT_FIXTURE_DIR}"
+  setup_fake_gh_two_sub_issues
+
+  run "${RALPH_ISSUES_BIN}" 2 --max-minutes 0
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stopping -- whole-run wall-clock ceiling of 0 minute(s) reached"* ]]
+  # Ceiling is checked before starting *any* sub-issue -- never mid-attempt.
+  [[ "$output" != *"Claimed #7"* ]]
+  [[ "$output" != *"Claimed #8"* ]]
+}
+
+@test "stops cleanly between sub-issues once the budget ceiling is reached" {
+  cd "${GIT_FIXTURE_DIR}"
+  setup_fake_gh_two_sub_issues
+
+  # Each sub-issue costs $0.15 (0.10 implement + 0.05 confirm); a $0.15 cap
+  # is reached only after #7 finishes, so #8 must never be claimed.
+  run "${RALPH_ISSUES_BIN}" 2 --max-budget-usd 0.15
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Claimed #7"* ]]
+  [[ "$output" == *"#7 First thing -- confirmed and closed"* ]]
+  [[ "$output" == *"stopping -- whole-run budget ceiling of \$0.15 reached"* ]]
+  [[ "$output" != *"Claimed #8"* ]]
+}
+
+@test "rejects a non-numeric --max-minutes value" {
+  cd "${GIT_FIXTURE_DIR}"
+  run "${RALPH_ISSUES_BIN}" 2 --max-minutes not-a-number
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"max-minutes"* ]]
+}
+
+@test "rejects a --max-minutes value with a leading zero" {
+  cd "${GIT_FIXTURE_DIR}"
+  # A leading-zero literal (e.g. "010") is octal in bash arithmetic, which
+  # would silently misinterpret this ceiling (or, for a digit like 8/9,
+  # abort with an uncaught "value too great for base" error) -- reject it
+  # at validation instead.
+  run "${RALPH_ISSUES_BIN}" 2 --max-minutes 010
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"max-minutes"* ]]
+}
+
+@test "rejects a non-numeric --max-budget-usd value" {
+  cd "${GIT_FIXTURE_DIR}"
+  run "${RALPH_ISSUES_BIN}" 2 --max-budget-usd not-a-number
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"max-budget-usd"* ]]
 }
 
 @test "rejects a non-numeric --max-attempts value" {

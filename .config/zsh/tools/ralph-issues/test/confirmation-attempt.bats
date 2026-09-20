@@ -49,12 +49,28 @@ setup() {
 # headless session is started.
 
 fake_claude_reporting() {
-  # $1: verdict json body to echo on stdout
+  # $1: structured_output json body (e.g. '{"verdict":"pass","reason":"..."}')
+  # $2: total_cost_usd to report (default 0.05)
+  local structured="$1" cost="${2:-0.05}"
   FAKE_CLAUDE_DIR="$(mktemp -d)"
   cat >"${FAKE_CLAUDE_DIR}/claude" <<EOF
 #!/usr/bin/env bash
 echo "cwd=\$(pwd -P)" >&2
 echo "args=\$*" >&2
+jq -n --argjson structured_output '${structured}' --arg cost '${cost}' \
+  '{is_error: false, total_cost_usd: (\$cost | tonumber), structured_output: \$structured_output, result: (\$structured_output | tojson)}'
+EOF
+  chmod +x "${FAKE_CLAUDE_DIR}/claude"
+}
+
+# For the "unparsable output" case, where the envelope itself isn't valid
+# JSON -- fake_claude_reporting's --argjson would reject bad input before
+# the script under test ever gets a chance to.
+fake_claude_reporting_raw() {
+  # $1: raw stdout body to print verbatim
+  FAKE_CLAUDE_DIR="$(mktemp -d)"
+  cat >"${FAKE_CLAUDE_DIR}/claude" <<EOF
+#!/usr/bin/env bash
 echo '$1'
 EOF
   chmod +x "${FAKE_CLAUDE_DIR}/claude"
@@ -72,39 +88,41 @@ EOF
   [[ "$output" == *"cwd=${worktree_dir}"* ]]
   [[ "$output" == *"args=-p --tools Bash,Read,Grep,Glob,Agent,Skill --dangerously-skip-permissions --json-schema"* ]]
   [[ "$output" == *'"enum":["pass","fail"]'* ]]
-  [[ "$output" == *"--output-format text"* ]]
+  [[ "$output" == *"--output-format json"* ]]
   [[ "$output" != *"Edit"* ]]
   [[ "$output" != *"Write"* ]]
 }
 
-@test "run: reports PASS and exits 0 on a passing verdict" {
+@test "run: reports PASS, its cost, and exits 0 on a passing verdict" {
   local worktree_dir
   worktree_dir="$(mktemp -d)"
-  fake_claude_reporting '{"verdict":"pass","reason":"tests and typecheck green, no hard findings"}'
+  fake_claude_reporting '{"verdict":"pass","reason":"tests and typecheck green, no hard findings"}' 0.0852231
 
   PATH="${FAKE_CLAUDE_DIR}:${PATH}" run "${CONFIRMATION_ATTEMPT}" run "${worktree_dir}" main 42 "Add the frobnicator"
   rm -rf "${FAKE_CLAUDE_DIR}" "${worktree_dir}"
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"Confirmation: PASS -- tests and typecheck green, no hard findings"* ]]
+  [[ "$output" == *"COST_USD=0.0852231"* ]]
 }
 
-@test "run: reports FAIL and exits non-zero on a failing verdict" {
+@test "run: reports FAIL, its cost, and exits non-zero on a failing verdict" {
   local worktree_dir
   worktree_dir="$(mktemp -d)"
-  fake_claude_reporting '{"verdict":"fail","reason":"one test is failing"}'
+  fake_claude_reporting '{"verdict":"fail","reason":"one test is failing"}' 0.02
 
   PATH="${FAKE_CLAUDE_DIR}:${PATH}" run "${CONFIRMATION_ATTEMPT}" run "${worktree_dir}" main 42 "Add the frobnicator"
   rm -rf "${FAKE_CLAUDE_DIR}" "${worktree_dir}"
 
   [ "$status" -ne 0 ]
   [[ "$output" == *"Confirmation: FAIL -- one test is failing"* ]]
+  [[ "$output" == *"COST_USD=0.02"* ]]
 }
 
 @test "run: fails clearly when claude's output cannot be parsed as a verdict" {
   local worktree_dir
   worktree_dir="$(mktemp -d)"
-  fake_claude_reporting 'not json at all'
+  fake_claude_reporting_raw 'not json at all'
 
   PATH="${FAKE_CLAUDE_DIR}:${PATH}" run "${CONFIRMATION_ATTEMPT}" run "${worktree_dir}" main 42 "Add the frobnicator"
   rm -rf "${FAKE_CLAUDE_DIR}" "${worktree_dir}"

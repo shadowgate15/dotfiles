@@ -9,10 +9,12 @@ WORKTREE="${LIB_DIR}/worktree"
 SUB_ISSUE_PIPELINE="${LIB_DIR}/sub-issue-pipeline"
 
 DEFAULT_MAX_ATTEMPTS=3
+DEFAULT_MAX_MINUTES=240
+DEFAULT_MAX_BUDGET_USD=20
 
 usage() {
   cat <<'EOF'
-Usage: ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>]
+Usage: ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>] [--max-minutes <n>] [--max-budget-usd <n>]
 
 Arguments:
   <parent-issue-number>  The parent GitHub issue whose sub-issues will be worked.
@@ -22,6 +24,11 @@ Options:
                           checkout's repo, inferred from `git remote -v`.
   --max-attempts <n>     Retry ceiling for a sub-issue's implement/confirm
                           inner loop. Default: 3.
+  --max-minutes <n>      Whole-run wall-clock ceiling, in minutes. Checked
+                          between sub-issues, never mid-attempt. Default: 240.
+  --max-budget-usd <n>   Whole-run dollar-cost ceiling, summed across every
+                          implement/confirm session. Checked between
+                          sub-issues, never mid-attempt. Default: 20.
   -h, --help             Show this help message.
 EOF
 }
@@ -34,6 +41,55 @@ fail() {
 
 is_owner_slash_repo() {
   [[ "$1" =~ ^[^/]+/[^/]+$ ]]
+}
+
+is_positive_integer() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+# Unlike --max-attempts (a retry count, where zero is meaningless), zero is
+# a legitimate --max-minutes value: "stop before working any sub-issue".
+# No leading zeros allowed -- besides being a weird way to write a number,
+# a leading-zero literal (e.g. "010") is octal in bash arithmetic, which
+# would silently misinterpret it in wall_clock_ceiling_reached's `* 60`.
+is_nonnegative_integer() {
+  [[ "$1" =~ ^(0|[1-9][0-9]*)$ ]]
+}
+
+is_positive_number() {
+  [[ "$1" =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v n="$1" 'BEGIN { exit !(n > 0) }'
+}
+
+# True (exit 0) once <spent> has reached or passed <cap>, both dollar
+# amounts. Floating-point, so plain bash arithmetic can't do this compare.
+budget_ceiling_reached() {
+  local spent="$1" cap="$2"
+  awk -v s="${spent}" -v c="${cap}" 'BEGIN { exit !(s >= c) }'
+}
+
+# True (exit 0) once <elapsed_seconds> has reached or passed <max_minutes>.
+wall_clock_ceiling_reached() {
+  local elapsed_seconds="$1" max_minutes="$2"
+  (( elapsed_seconds >= max_minutes * 60 ))
+}
+
+sum_two_costs() {
+  awk -v a="$1" -v b="$2" 'BEGIN { printf "%.6f", a + b }'
+}
+
+# Prints every already-processed sub-issue's outcome, one per line, so an
+# unattended run's progress is visible without digging through logs. Prints
+# nothing at all if nothing has been processed yet, so a run that finds no
+# ready sub-issue on its very first pass still prints a single clean line.
+print_processed_summary() {
+  local -n _items="$1"
+  [[ ${#_items[@]} -gt 0 ]] || return 0
+
+  echo "Processed so far:"
+  local line
+  for line in "${_items[@]}"; do
+    echo "  ${line}"
+  done
 }
 
 infer_repo_from_git_remote() {
@@ -58,6 +114,8 @@ main() {
   local parent_issue=""
   local repo_override=""
   local max_attempts="${DEFAULT_MAX_ATTEMPTS}"
+  local max_minutes="${DEFAULT_MAX_MINUTES}"
+  local max_budget_usd="${DEFAULT_MAX_BUDGET_USD}"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -83,6 +141,24 @@ main() {
         max_attempts="${1#--max-attempts=}"
         shift
         ;;
+      --max-minutes)
+        [[ $# -ge 2 ]] || fail "--max-minutes requires a value"
+        max_minutes="$2"
+        shift 2
+        ;;
+      --max-minutes=*)
+        max_minutes="${1#--max-minutes=}"
+        shift
+        ;;
+      --max-budget-usd)
+        [[ $# -ge 2 ]] || fail "--max-budget-usd requires a value"
+        max_budget_usd="$2"
+        shift 2
+        ;;
+      --max-budget-usd=*)
+        max_budget_usd="${1#--max-budget-usd=}"
+        shift
+        ;;
       -*)
         fail "unknown option '$1'"
         ;;
@@ -98,7 +174,9 @@ main() {
 
   [[ -n "${parent_issue}" ]] || fail "missing required <parent-issue-number>"
   [[ "${parent_issue}" =~ ^[1-9][0-9]*$ ]] || fail "invalid parent issue number '${parent_issue}' — must be a positive integer"
-  [[ "${max_attempts}" =~ ^[1-9][0-9]*$ ]] || fail "invalid --max-attempts value '${max_attempts}' — must be a positive integer"
+  is_positive_integer "${max_attempts}" || fail "invalid --max-attempts value '${max_attempts}' — must be a positive integer"
+  is_nonnegative_integer "${max_minutes}" || fail "invalid --max-minutes value '${max_minutes}' — must be a non-negative integer"
+  is_positive_number "${max_budget_usd}" || fail "invalid --max-budget-usd value '${max_budget_usd}' — must be a positive number"
 
   local repo
   if [[ -n "${repo_override}" ]]; then
@@ -108,36 +186,100 @@ main() {
     repo="$(infer_repo_from_git_remote)"
   fi
 
-  local decision next_number
-  decision="$("${GITHUB_ADAPTER}" frontier-input "${repo}" "${parent_issue}" | "${FRONTIER_QUERY}")"
-  next_number="$(jq -r '.next // empty' <<<"${decision}")"
-
-  if [[ -z "${next_number}" ]]; then
-    echo "No ready sub-issue for parent #${parent_issue} in ${repo} (all sub-issues are blocked, assigned, or none exist)."
-    return 0
-  fi
-
-  local next_title
-  next_title="$("${GITHUB_ADAPTER}" title "${repo}" "${next_number}")"
-  echo "Next: #${next_number} ${next_title}"
-
   local repo_root
   repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "must be run from within a git checkout to create a worktree"
 
   local base_ref
   base_ref="$(git -C "${repo_root}" rev-parse HEAD)"
 
-  local worktree_dir worktree_branch
-  worktree_dir="$("${WORKTREE}" create "${repo_root}" "${next_number}" "${base_ref}")"
-  worktree_branch="$("${WORKTREE}" branch-name "${next_number}")"
-  echo "Worktree: ${worktree_dir} (branch ${worktree_branch})"
+  local run_started
+  run_started="$(date +%s)"
+  local total_cost="0"
+  local -a processed=()
 
-  "${GITHUB_ADAPTER}" claim "${repo}" "${next_number}" >/dev/null
-  echo "Claimed #${next_number}"
+  while true; do
+    # Printed once at the top of every iteration (silently, if nothing has
+    # finished yet) rather than only at a stopping point, so a run's
+    # progress is visible on screen throughout -- including while the
+    # sub-issue below is still being worked -- not just at the very end.
+    print_processed_summary processed
 
-  echo "Running implement/confirm pipeline for #${next_number} in ${worktree_dir}..."
-  "${SUB_ISSUE_PIPELINE}" run "${repo_root}" "${worktree_dir}" "${base_ref}" "${repo}" \
-    "${parent_issue}" "${next_number}" "${next_title}" "${max_attempts}"
+    local elapsed
+    elapsed=$(( $(date +%s) - run_started ))
+
+    if wall_clock_ceiling_reached "${elapsed}" "${max_minutes}"; then
+      echo "ralph-issues: stopping -- whole-run wall-clock ceiling of ${max_minutes} minute(s) reached ($(( elapsed / 60 )) minute(s) elapsed)."
+      return 0
+    fi
+
+    if budget_ceiling_reached "${total_cost}" "${max_budget_usd}"; then
+      echo "ralph-issues: stopping -- whole-run budget ceiling of \$${max_budget_usd} reached (spent \$${total_cost})."
+      return 0
+    fi
+
+    local decision next_number
+    decision="$("${GITHUB_ADAPTER}" frontier-input "${repo}" "${parent_issue}" | "${FRONTIER_QUERY}")"
+    next_number="$(jq -r '.next // empty' <<<"${decision}")"
+
+    if [[ -z "${next_number}" ]]; then
+      echo "No ready sub-issue for parent #${parent_issue} in ${repo} (all sub-issues are blocked, assigned, or none exist)."
+      return 0
+    fi
+
+    local next_title
+    next_title="$("${GITHUB_ADAPTER}" title "${repo}" "${next_number}")"
+    echo "Now working: #${next_number} ${next_title}"
+
+    local worktree_dir worktree_branch
+    worktree_dir="$("${WORKTREE}" create "${repo_root}" "${next_number}" "${base_ref}")"
+    worktree_branch="$("${WORKTREE}" branch-name "${next_number}")"
+    echo "Worktree: ${worktree_dir} (branch ${worktree_branch})"
+
+    "${GITHUB_ADAPTER}" claim "${repo}" "${next_number}" >/dev/null
+    echo "Claimed #${next_number}"
+
+    echo "Running implement/confirm pipeline for #${next_number} in ${worktree_dir}..."
+
+    # Piped through `tee` (rather than plain command substitution) so the
+    # sub-issue's pipeline output still streams live to the terminal, while
+    # also being captured here to pull out its `SUBISSUE_COST_USD=<amount>`
+    # line and its pass/escalate exit status for the run summary.
+    local pipeline_tmp pipeline_status=0
+    pipeline_tmp="$(mktemp)"
+    "${SUB_ISSUE_PIPELINE}" run "${repo_root}" "${worktree_dir}" "${base_ref}" "${repo}" \
+      "${parent_issue}" "${next_number}" "${next_title}" "${max_attempts}" \
+      2>&1 | tee "${pipeline_tmp}" || pipeline_status=$?
+    local pipeline_output
+    pipeline_output="$(cat "${pipeline_tmp}")"
+    rm -f "${pipeline_tmp}"
+
+    local sub_cost
+    sub_cost="$(grep -oE '^SUBISSUE_COST_USD=[0-9.eE+-]+' <<<"${pipeline_output}" | tail -n1 | cut -d= -f2)" || true
+    sub_cost="${sub_cost:-0}"
+    total_cost="$(sum_two_costs "${total_cost}" "${sub_cost}")"
+
+    if [[ ${pipeline_status} -eq 0 ]]; then
+      processed+=("#${next_number} ${next_title} -- confirmed and closed")
+
+      # Later sub-issues branch from this run's integration branch (not the
+      # commit the run started at), so each one builds on every sub-issue
+      # already merged rather than diverging from stale starting state.
+      local integration_branch
+      integration_branch="$("${WORKTREE}" integration-branch-name "${parent_issue}")"
+      base_ref="$(git -C "${repo_root}" rev-parse "${integration_branch}")"
+    else
+      processed+=("#${next_number} ${next_title} -- escalated for human follow-up")
+    fi
+
+    # Recomputed rather than reusing this iteration's `elapsed` from before
+    # the sub-issue was worked -- that value is now stale by however long
+    # the implement/confirm pipeline just took.
+    local elapsed_now
+    elapsed_now=$(( $(date +%s) - run_started ))
+    echo "ralph-issues: run so far -- ${#processed[@]} sub-issue(s) processed, \$${total_cost} spent, $(( elapsed_now / 60 )) minute(s) elapsed."
+  done
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

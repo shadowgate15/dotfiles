@@ -40,8 +40,9 @@ setup() {
   FAKE_CLAUDE_DIR="$(mktemp -d)"
   cat >"${FAKE_CLAUDE_DIR}/claude" <<'EOF'
 #!/usr/bin/env bash
-echo "cwd=$(pwd -P)"
-echo "args=$*"
+echo "cwd=$(pwd -P)" >&2
+echo "args=$*" >&2
+jq -n --arg args "$*" '{is_error: false, total_cost_usd: 0.1234, result: ("cwd=" + $args)}'
 EOF
   chmod +x "${FAKE_CLAUDE_DIR}/claude"
 
@@ -50,8 +51,27 @@ EOF
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"cwd=${worktree_dir}"* ]]
-  [[ "$output" == *"args=-p --dangerously-skip-permissions /implement Implement issue #42:"* ]]
+  [[ "$output" == *"args=-p --dangerously-skip-permissions --output-format json /implement Implement issue #42:"* ]]
   [[ "$output" == *"do not create a new branch"* ]]
+}
+
+@test "run: prints the session's final result followed by a COST_USD line" {
+  local worktree_dir
+  worktree_dir="$(mktemp -d)"
+
+  FAKE_CLAUDE_DIR="$(mktemp -d)"
+  cat >"${FAKE_CLAUDE_DIR}/claude" <<'EOF'
+#!/usr/bin/env bash
+jq -n '{is_error: false, total_cost_usd: 0.0852231, result: "implemented the frobnicator"}'
+EOF
+  chmod +x "${FAKE_CLAUDE_DIR}/claude"
+
+  PATH="${FAKE_CLAUDE_DIR}:${PATH}" run "${IMPLEMENT_ATTEMPT}" run "${worktree_dir}" 42 "Add the frobnicator"
+  rm -rf "${FAKE_CLAUDE_DIR}" "${worktree_dir}"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"implemented the frobnicator"* ]]
+  [[ "$output" == *"COST_USD=0.0852231"* ]]
 }
 
 @test "run: propagates claude's exit status" {
@@ -103,4 +123,20 @@ EOF
 
   [ "$status" -ne 0 ]
   [[ "$output" == *"claude"*"not found on PATH"* ]]
+}
+
+@test "fails clearly when jq is not on PATH" {
+  # `claude` faked in, but neither /usr/bin (system jq) nor the homebrew
+  # prefix (real jq/claude) is on PATH.
+  FAKE_CLAUDE_DIR="$(mktemp -d)"
+  cat >"${FAKE_CLAUDE_DIR}/claude" <<'EOF'
+#!/usr/bin/env bash
+EOF
+  chmod +x "${FAKE_CLAUDE_DIR}/claude"
+
+  PATH="${FAKE_CLAUDE_DIR}:/bin" run "${IMPLEMENT_ATTEMPT}" prompt 42 "Some title"
+  rm -rf "${FAKE_CLAUDE_DIR}"
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"jq"*"not found on PATH"* ]]
 }
