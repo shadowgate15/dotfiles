@@ -58,6 +58,11 @@ case "\$*" in
 esac
 EOF
   chmod +x "${FAKE_GH_DIR}/gh"
+  cat >"${FAKE_GH_DIR}/claude" <<'EOF'
+#!/usr/bin/env bash
+echo "fake claude: $*"
+EOF
+  chmod +x "${FAKE_GH_DIR}/claude"
   PATH="${FAKE_GH_DIR}:${PATH}"
 }
 
@@ -74,6 +79,8 @@ EOF
   [[ "$output" == "Next: #7 Do the thing"* ]]
   [[ "$output" == *"Worktree: ${GIT_FIXTURE_DIR}.ralph-worktrees/issue-7 (branch ralph-issues/issue-7)"* ]]
   [[ "$output" == *"Claimed #7"* ]]
+  [[ "$output" == *"fake claude: -p --dangerously-skip-permissions /implement Implement issue #7:"* ]]
+  [[ "$output" == *"Implement attempt finished for #7"* ]]
   [ -d "${GIT_FIXTURE_DIR}.ralph-worktrees/issue-7" ]
 }
 

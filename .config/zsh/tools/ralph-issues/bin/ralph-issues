@@ -6,6 +6,7 @@ LIB_DIR="${SCRIPT_DIR}/../lib"
 GITHUB_ADAPTER="${LIB_DIR}/github-adapter"
 FRONTIER_QUERY="${LIB_DIR}/frontier-query"
 WORKTREE="${LIB_DIR}/worktree"
+IMPLEMENT_ATTEMPT="${LIB_DIR}/implement-attempt"
 
 usage() {
   cat <<'EOF'
@@ -115,6 +116,10 @@ main() {
 
   "${GITHUB_ADAPTER}" claim "${repo}" "${next_number}" >/dev/null
   echo "Claimed #${next_number}"
+
+  echo "Implementing #${next_number} in ${worktree_dir}..."
+  "${IMPLEMENT_ATTEMPT}" run "${worktree_dir}" "${next_number}" "${next_title}"
+  echo "Implement attempt finished for #${next_number}"
 }
 
 main "$@"

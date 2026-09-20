@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Headless implement-attempt invocation: the sole place `claude` is invoked
+# from ralph-issues. Orchestration code calls only this script's subcommand
+# interface, never `claude` directly. Runs a completely fresh, memory-less
+# headless Claude Code session in a sub-issue's worktree, with permission
+# checks fully bypassed, prompting it to implement the sub-issue via the
+# `implement` skill's slash-command form. Nothing from a prior attempt is
+# injected into the prompt beyond what's already committed or present in
+# the worktree — every call to `run` starts a wholly new session, since no
+# session id/--resume/--continue is ever passed.
+
+usage() {
+  cat <<'EOF'
+Usage: implement-attempt <subcommand> [args...]
+
+Subcommands:
+  prompt <issue-number> <issue-title>
+      Print the prompt `run` sends to Claude Code, without invoking
+      anything.
+
+  run <worktree-dir> <issue-number> <issue-title>
+      Invoke a fresh, memory-less headless Claude Code session in
+      <worktree-dir>, with permission checks fully bypassed, prompting it
+      to implement <issue-number> via the `implement` skill's
+      slash-command form. Exits with the invoked session's exit status.
+EOF
+}
+
+fail() {
+  echo "Error: $1" >&2
+  usage >&2
+  exit 1
+}
+
+is_issue_number() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+require_claude() {
+  command -v claude >/dev/null 2>&1 || fail "the \`claude\` CLI is required but was not found on PATH."
+}
+
+build_prompt() {
+  local issue="$1" title="$2"
+  printf '/implement Implement issue #%s: "%s". You are already inside the dedicated git worktree and branch for this issue -- do not create a new branch. Do not close the issue when you are done; a separate verification step will handle that.\n' \
+    "${issue}" "${title}"
+}
+
+cmd_prompt() {
+  local issue="${1:-}" title="${2:-}"
+  [[ -n "${issue}" && -n "${title}" ]] || fail "prompt requires <issue-number> <issue-title>"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  build_prompt "${issue}" "${title}"
+}
+
+cmd_run() {
+  local worktree_dir="${1:-}" issue="${2:-}" title="${3:-}"
+  [[ -n "${worktree_dir}" && -n "${issue}" && -n "${title}" ]] || fail "run requires <worktree-dir> <issue-number> <issue-title>"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  [[ -d "${worktree_dir}" ]] || fail "worktree directory '${worktree_dir}' does not exist"
+
+  local prompt
+  prompt="$(build_prompt "${issue}" "${title}")"
+
+  (
+    cd "${worktree_dir}"
+    claude -p --dangerously-skip-permissions "${prompt}"
+  )
+}
+
+main() {
+  local sub="${1:-}"
+
+  if [[ -z "${sub}" ]]; then
+    usage >&2
+    exit 1
+  fi
+  if [[ "${sub}" == "-h" || "${sub}" == "--help" ]]; then
+    usage
+    exit 0
+  fi
+  shift
+
+  require_claude
+
+  case "${sub}" in
+    prompt) cmd_prompt "$@" ;;
+    run) cmd_run "$@" ;;
+    *) fail "unknown subcommand '${sub}'" ;;
+  esac
+}
+
+# Guarded so bats can `source` this file to unit-test pure helpers (e.g.
+# build_prompt) without triggering a `claude` call.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

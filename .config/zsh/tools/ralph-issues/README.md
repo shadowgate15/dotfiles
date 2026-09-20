@@ -5,8 +5,10 @@ See issue #1 in this repo for the full design.
 
 This currently covers scaffolding (issue #2), the frontier-query ordering
 function (issue #3), the GitHub tracker adapter + "what's next" vertical
-slice (issue #4), and per-sub-issue git worktree + claim (issue #5). Claude
-Code invocation logic doesn't exist yet.
+slice (issue #4), per-sub-issue git worktree + claim (issue #5), and the
+headless implement-attempt invocation (issue #6). The independent
+confirmation pass, retry/escalate loop, and outer-loop ceilings don't exist
+yet.
 
 ## Usage
 
@@ -22,7 +24,28 @@ a dedicated, disposable git worktree and branch scoped to that sub-issue
 abandoned attempt on one sub-issue can never contaminate another's starting
 state. Running the tool again while that sub-issue is still assigned does
 not re-claim it or create a second worktree — the frontier query skips
-assigned issues.
+assigned issues. It then invokes a single headless implement attempt
+(`<lib/implement-attempt>`, below) in that worktree.
+
+## `lib/implement-attempt`
+
+The only place `claude` is invoked from ralph-issues.
+
+```sh
+implement-attempt prompt <issue-number> <issue-title>            # -> the prompt `run` sends, no side effects
+implement-attempt run <worktree-dir> <issue-number> <issue-title>  # -> invokes headless Claude Code
+```
+
+`run` invokes a completely fresh, memory-less headless Claude Code session
+(`claude -p --dangerously-skip-permissions`) in `<worktree-dir>`, prompting
+it to implement the sub-issue via the `implement` skill's slash-command
+form. No session id, `--resume`, or `--continue` is ever passed, so every
+call is a wholly new session with no memory of any prior attempt beyond
+what's already committed or present in the worktree. Permission checks are
+fully bypassed so an unattended run never stalls waiting on an approval.
+Exits with the invoked session's exit status. Retrying a failed attempt,
+verifying its result, and closing the sub-issue are not this script's job —
+see issues #7 and #8.
 
 ## `lib/worktree`
 
