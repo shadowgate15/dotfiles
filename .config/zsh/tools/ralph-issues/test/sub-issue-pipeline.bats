@@ -85,12 +85,12 @@ if [[ "\$*" == *"--json-schema"* ]]; then
   echo "\${n}" >"${fakes_dir}/confirm-count.txt"
   structured="\$(sed -n "\${n}p" "${fakes_dir}/verdicts.txt")"
   jq -n --argjson structured_output "\${structured}" \
-    '{is_error: false, total_cost_usd: 0.05, structured_output: \$structured_output, result: (\$structured_output | tojson)}'
+    '{is_error: false, total_cost_usd: 0.05, usage: {}, structured_output: \$structured_output, result: (\$structured_output | tojson)}'
 else
   echo "implemented" >>file.txt
   git add -A
   git commit -q -m "implement attempt commit"
-  jq -n '{is_error: false, total_cost_usd: 0.10, result: "implemented"}'
+  jq -n '{is_error: false, total_cost_usd: 0.10, usage: {}, result: "implemented"}'
 fi
 EOF
   chmod +x "${fakes_dir}/claude"
@@ -231,11 +231,11 @@ if [[ "\$*" == *"--json-schema"* ]]; then
   echo "\${n}" >"${FAKES_DIR}/confirm-count.txt"
   structured="\$(sed -n "\${n}p" "${FAKES_DIR}/verdicts.txt")"
   jq -n --argjson structured_output "\${structured}" \
-    '{is_error: false, total_cost_usd: 0.05, structured_output: \$structured_output, result: (\$structured_output | tojson)}'
+    '{is_error: false, total_cost_usd: 0.05, usage: {}, structured_output: \$structured_output, result: (\$structured_output | tojson)}'
 else
   echo "sub-issue-side edit" >file.txt
   git commit -aqm "implement attempt commit"
-  jq -n '{is_error: false, total_cost_usd: 0.10, result: "implemented"}'
+  jq -n '{is_error: false, total_cost_usd: 0.10, usage: {}, result: "implemented"}'
 fi
 EOF
   chmod +x "${FAKES_DIR}/claude"

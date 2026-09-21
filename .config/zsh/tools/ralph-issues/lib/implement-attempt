@@ -25,9 +25,8 @@ Subcommands:
       <worktree-dir>, with permission checks fully bypassed, prompting it
       to implement <issue-number> via the `implement` skill's
       slash-command form. Prints the session's final response followed by
-      a `COST_USD=<amount>` line (the session's dollar cost, for the
-      orchestrator's whole-run budget ceiling). Exits with the invoked
-      session's exit status.
+      a `COST_USD=<amount>` line (the session's dollar cost). Exits with
+      the invoked session's exit status.
 EOF
 }
 
@@ -72,10 +71,9 @@ cmd_run() {
   prompt="$(build_prompt "${issue}" "${title}")"
 
   # --output-format json is requested solely so this attempt's dollar cost
-  # (total_cost_usd) can be reported back to the orchestrator for the
-  # whole-run budget ceiling -- the session's exit status is still the only
-  # thing that matters beyond that; a non-JSON/error response short-circuits
-  # before any parsing.
+  # (total_cost_usd) can be reported via the COST_USD=<amount> line below --
+  # the session's exit status is still the only thing that matters beyond
+  # that; a non-JSON/error response short-circuits before any parsing.
   local raw_output status=0
   raw_output="$(
     cd "${worktree_dir}"

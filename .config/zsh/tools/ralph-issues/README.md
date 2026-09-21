@@ -9,20 +9,21 @@ slice (issue #4), per-sub-issue git worktree + claim (issue #5), the
 headless implement-attempt invocation (issue #6), the read-only
 confirmation pass (issue #7), the single sub-issue retry/verify-gated
 close/escalate pipeline (issue #8), and the outer loop over a parent issue's
-full run with whole-run ceilings and progress visibility (issue #9). The
-final single pull request covering a whole run doesn't exist yet.
+full run with a whole-run wall-clock ceiling and progress visibility
+(issue #9). The final single pull request covering a whole run doesn't
+exist yet.
 
 ## Usage
 
 ```sh
-ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>] [--max-minutes <n>] [--max-budget-usd <n>]
+ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>] [--max-minutes <n>]
 ```
 
 `--repo` defaults to the current checkout's repo, inferred from `git remote -v`.
 The tool loops: it recomputes the frontier, works the next ready sub-issue
 (the first one with no open blocker and no assignee) to completion, then
 recomputes the frontier again -- repeating until the frontier query returns
-no further ready sub-issue, or a whole-run ceiling is hit. Sub-issues are
+no further ready sub-issue, or the whole-run ceiling is hit. Sub-issues are
 always processed strictly one at a time, in frontier order, never in
 parallel. For each ready sub-issue, it creates a dedicated, disposable git
 worktree and branch scoped to that sub-issue (`lib/worktree`, below) and
@@ -39,19 +40,14 @@ sub-issue's worktree is branched from the run's integration branch (rather
 than the commit the run started at), so later sub-issues build on top of
 already-completed work instead of diverging from stale starting state.
 
-Before starting each sub-issue, two whole-run ceilings are checked --
+Before starting each sub-issue, a whole-run wall-clock ceiling is checked --
 between attempts only, never in the middle of one:
 
 - `--max-minutes <n>` (default 240) -- wall-clock time elapsed since the
   run started.
-- `--max-budget-usd <n>` (default 20) -- cumulative dollar cost across
-  every sub-issue processed so far in this run, summed from each
-  sub-issue's `SUBISSUE_COST_USD=<amount>` line (`lib/sub-issue-pipeline`,
-  below, which itself sums that sub-issue's own attempts' `COST_USD=<amount>`
-  lines from `lib/implement-attempt` and `lib/confirmation-attempt`).
 
-Either ceiling stops the run cleanly (the in-progress sub-issue, if any, has
-already finished) rather than mid-attempt. Both have safe built-in defaults
+The ceiling stops the run cleanly (the in-progress sub-issue, if any, has
+already finished) rather than mid-attempt. It has a safe built-in default
 so a first run with no flags still behaves safely.
 
 While running, the tool prints a `Processed so far:` list of every
@@ -158,8 +154,7 @@ non-zero.
 
 Either way, `run` prints a final `SUBISSUE_COST_USD=<amount>` line — the
 sum of every implement/confirm attempt's `COST_USD=<amount>` for this
-sub-issue — which the `ralph-issues` outer loop (above) accumulates into
-its whole-run budget ceiling.
+sub-issue — which the `ralph-issues` outer loop (above) ignores.
 
 ## `lib/worktree`
 

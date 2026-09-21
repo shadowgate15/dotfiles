@@ -58,7 +58,7 @@ fake_claude_reporting() {
 echo "cwd=\$(pwd -P)" >&2
 echo "args=\$*" >&2
 jq -n --argjson structured_output '${structured}' --arg cost '${cost}' \
-  '{is_error: false, total_cost_usd: (\$cost | tonumber), structured_output: \$structured_output, result: (\$structured_output | tojson)}'
+  '{is_error: false, total_cost_usd: (\$cost | tonumber), usage: {}, structured_output: \$structured_output, result: (\$structured_output | tojson)}'
 EOF
   chmod +x "${FAKE_CLAUDE_DIR}/claude"
 }

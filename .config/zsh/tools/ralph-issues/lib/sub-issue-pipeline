@@ -37,8 +37,7 @@ On exhausting <max-attempts> without a pass: labels the sub-issue
 verdict, leaving <worktree-dir> and its branch in place. Exits 1.
 
 Either way, prints a final `SUBISSUE_COST_USD=<amount>` line -- the summed
-dollar cost of every implement/confirm attempt made for this sub-issue --
-for the orchestrator's whole-run budget ceiling.
+dollar cost of every implement/confirm attempt made for this sub-issue.
 EOF
 }
 

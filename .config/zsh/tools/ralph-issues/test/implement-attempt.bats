@@ -42,7 +42,7 @@ setup() {
 #!/usr/bin/env bash
 echo "cwd=$(pwd -P)" >&2
 echo "args=$*" >&2
-jq -n --arg args "$*" '{is_error: false, total_cost_usd: 0.1234, result: ("cwd=" + $args)}'
+jq -n --arg args "$*" '{is_error: false, total_cost_usd: 0.1234, usage: {}, result: ("cwd=" + $args)}'
 EOF
   chmod +x "${FAKE_CLAUDE_DIR}/claude"
 
@@ -62,7 +62,7 @@ EOF
   FAKE_CLAUDE_DIR="$(mktemp -d)"
   cat >"${FAKE_CLAUDE_DIR}/claude" <<'EOF'
 #!/usr/bin/env bash
-jq -n '{is_error: false, total_cost_usd: 0.0852231, result: "implemented the frobnicator"}'
+jq -n '{is_error: false, total_cost_usd: 0.0852231, usage: {}, result: "implemented the frobnicator"}'
 EOF
   chmod +x "${FAKE_CLAUDE_DIR}/claude"
 

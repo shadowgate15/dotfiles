@@ -24,10 +24,9 @@ Subcommands:
       <worktree-dir>, prompting it to run the repo's test/typecheck
       commands and the `code-review` skill against the diff between
       <base-ref> and HEAD. Prints the verdict and reason followed by a
-      `COST_USD=<amount>` line (the session's dollar cost, for the
-      orchestrator's whole-run budget ceiling), and exits 0 if the verdict
-      is "pass", non-zero otherwise (a reported "fail" verdict, or a
-      tooling/parse error -- both are "not confirmed").
+      `COST_USD=<amount>` line (the session's dollar cost), and exits 0 if
+      the verdict is "pass", non-zero otherwise (a reported "fail" verdict,
+      or a tooling/parse error -- both are "not confirmed").
 EOF
 }
 
@@ -100,8 +99,8 @@ cmd_run() {
 
   # --output-format json (rather than "text") wraps the schema-constrained
   # answer in the session's full result envelope, which is what exposes
-  # total_cost_usd -- needed to report this attempt's dollar cost back to
-  # the orchestrator for the whole-run budget ceiling.
+  # total_cost_usd -- needed to report this attempt's dollar cost via the
+  # COST_USD=<amount> line below.
   local envelope
   envelope="$(
     cd "${worktree_dir}"
