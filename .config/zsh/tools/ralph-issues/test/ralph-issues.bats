@@ -83,6 +83,10 @@ case "\$*" in
     ;;
   "issue edit ${4} --repo ${1} --add-assignee @me")
     ;;
+  "issue edit ${4} --repo ${1} --remove-label ready-for-agent")
+    ;;
+  "issue edit ${4} --repo ${1} --remove-label ready-for-human")
+    ;;
   "issue close ${4} --repo ${1} --comment"*)
     echo "closed" >"${state_file}"
     ;;
@@ -195,6 +199,10 @@ case "\$*" in
     ;;
   "issue edit 7 --repo some-owner/some-repo --add-assignee @me") ;;
   "issue edit 8 --repo some-owner/some-repo --add-assignee @me") ;;
+  "issue edit 7 --repo some-owner/some-repo --remove-label ready-for-agent") ;;
+  "issue edit 8 --repo some-owner/some-repo --remove-label ready-for-agent") ;;
+  "issue edit 7 --repo some-owner/some-repo --remove-label ready-for-human") ;;
+  "issue edit 8 --repo some-owner/some-repo --remove-label ready-for-human") ;;
   "issue close 7 --repo some-owner/some-repo --comment"*)
     echo 1 >"${phase_file}"
     ;;
@@ -367,4 +375,124 @@ EOF
   [[ "$output" == *"repo"* ]]
 
   rm -rf "${bare_dir}"
+}
+
+# Claim strips both poles, and the outer loop backstops any non-zero
+# pipeline exit -- including a stubbed crash before the pipeline's own
+# escalation code runs -- to unassigned + ready-for-human.
+
+# $1: repo, $2: parent issue, $3: next issue number, $4: next title,
+# $5: log file every matched gh invocation is appended to.
+#
+# Stateful: the sub_issues response reflects whatever assignment/labels have
+# actually been applied so far, rather than a static fixture -- otherwise
+# the outer loop would see the same "still ready" issue forever and loop.
+setup_fake_gh_logging() {
+  FAKE_GH_DIR="$(mktemp -d)"
+  local assignee_file="${FAKE_GH_DIR}/assignee" labels_file="${FAKE_GH_DIR}/labels"
+  : >"$5"
+  : >"${assignee_file}"
+  echo "ready-for-agent" >"${labels_file}"
+  cat >"${FAKE_GH_DIR}/gh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+echo "gh \$*" >>"$5"
+case "\$*" in
+  "api repos/${1}/issues/${2}/sub_issues --jq"*)
+    assignees_json="[]"
+    [[ -s "${assignee_file}" ]] && assignees_json='["some-owner"]'
+    labels_json="\$(jq -R -s -c 'split("\n") | map(select(length > 0))' <"${labels_file}")"
+    jq -n --argjson assignees "\${assignees_json}" --argjson labels "\${labels_json}" \
+      '[{number: ${3}, state: "open", blocked_by: 0, assignees: \$assignees, labels: \$labels}]'
+    ;;
+  "issue view ${3} --repo ${1} --json title --jq .title")
+    echo "${4}"
+    ;;
+  "issue edit ${3} --repo ${1} --add-assignee @me")
+    echo "assigned" >"${assignee_file}"
+    ;;
+  "issue edit ${3} --repo ${1} --remove-assignee @me")
+    : >"${assignee_file}"
+    ;;
+  "issue edit ${3} --repo ${1} --remove-label ready-for-agent")
+    grep -v '^ready-for-agent\$' "${labels_file}" >"${labels_file}.tmp" || true
+    mv "${labels_file}.tmp" "${labels_file}"
+    ;;
+  "issue edit ${3} --repo ${1} --remove-label ready-for-human")
+    grep -v '^ready-for-human\$' "${labels_file}" >"${labels_file}.tmp" || true
+    mv "${labels_file}.tmp" "${labels_file}"
+    ;;
+  "label create ready-for-human --repo ${1} --force") ;;
+  "issue edit ${3} --repo ${1} --add-label ready-for-human")
+    echo "ready-for-human" >>"${labels_file}"
+    ;;
+  *)
+    echo "fake gh: unhandled invocation: \$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+  chmod +x "${FAKE_GH_DIR}/gh"
+  PATH="${FAKE_GH_DIR}:${PATH}"
+}
+
+@test "claim defensively strips both ready-for-agent and ready-for-human right after assigning" {
+  cd "${GIT_FIXTURE_DIR}"
+  local gh_log="${BATS_TEST_TMPDIR}/gh.log"
+  setup_fake_gh_logging "some-owner/some-repo" 2 7 "Do the thing" "${gh_log}"
+  install_fake_claude "${FAKE_GH_DIR}"
+
+  local assign_line strip_agent_line strip_human_line
+  # The claim-strip happens unconditionally, before the pipeline is even
+  # invoked -- a stub that immediately fails is enough to isolate that
+  # ordering from the separate give-up backstop covered below, without
+  # needing to fake a real merge into an integration branch.
+  cat >"${BATS_TEST_TMPDIR}/stub-pipeline" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "${BATS_TEST_TMPDIR}/stub-pipeline"
+
+  SUB_ISSUE_PIPELINE="${BATS_TEST_TMPDIR}/stub-pipeline" run "${RALPH_ISSUES_BIN}" 2
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+
+  assign_line="$(grep -n "issue edit 7 --repo some-owner/some-repo --add-assignee @me" "${gh_log}" | head -n1 | cut -d: -f1)"
+  strip_agent_line="$(grep -n "issue edit 7 --repo some-owner/some-repo --remove-label ready-for-agent" "${gh_log}" | head -n1 | cut -d: -f1)"
+  strip_human_line="$(grep -n "issue edit 7 --repo some-owner/some-repo --remove-label ready-for-human" "${gh_log}" | head -n1 | cut -d: -f1)"
+
+  [ -n "${assign_line}" ]
+  [ -n "${strip_agent_line}" ]
+  [ -n "${strip_human_line}" ]
+  [ "${assign_line}" -lt "${strip_agent_line}" ]
+  [ "${assign_line}" -lt "${strip_human_line}" ]
+}
+
+@test "any non-zero pipeline exit backstops to unassigned + ready-for-human, even a pipeline stubbed to crash before its own escalation code" {
+  cd "${GIT_FIXTURE_DIR}"
+  local gh_log="${BATS_TEST_TMPDIR}/gh.log"
+  setup_fake_gh_logging "some-owner/some-repo" 2 7 "Do the thing" "${gh_log}"
+  install_fake_claude "${FAKE_GH_DIR}"
+
+  # Simulates a crash before the pipeline's own escalation path (comment,
+  # unlabel/label, unclaim) ever runs -- it does nothing but exit non-zero.
+  cat >"${BATS_TEST_TMPDIR}/crashing-pipeline" <<'EOF'
+#!/usr/bin/env bash
+echo "boom: simulated crash before escalation code" >&2
+exit 1
+EOF
+  chmod +x "${BATS_TEST_TMPDIR}/crashing-pipeline"
+
+  SUB_ISSUE_PIPELINE="${BATS_TEST_TMPDIR}/crashing-pipeline" run "${RALPH_ISSUES_BIN}" 2
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"escalated for human follow-up"* ]]
+
+  grep -q "issue edit 7 --repo some-owner/some-repo --remove-assignee @me" "${gh_log}"
+  grep -q "issue edit 7 --repo some-owner/some-repo --add-label ready-for-human" "${gh_log}"
+
+  # Never closed -- the crash happened before any confirmation could pass.
+  ! grep -q "issue close" "${gh_log}"
 }

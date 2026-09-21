@@ -31,15 +31,27 @@ worktree and branch scoped to that sub-issue (`lib/worktree`, below) and
 claims it via the adapter, so an in-progress or abandoned attempt on one
 sub-issue can never contaminate another's starting state. Running the tool
 again while a sub-issue is still assigned does not re-claim it or create a
-second worktree — the frontier query skips assigned issues. It then hands
-the sub-issue off to `lib/sub-issue-pipeline` (below), which runs the
-implement/confirm retry loop and closes, merges, or escalates it, before
-the outer loop moves on to recomputing the frontier for the next one --
-including after an escalation, so one stuck sub-issue never stalls the rest
-of the run. After each sub-issue that's confirmed and merged, the next
-sub-issue's worktree is branched from the run's integration branch (rather
-than the commit the run started at), so later sub-issues build on top of
-already-completed work instead of diverging from stale starting state.
+second worktree — the frontier query skips assigned issues. Immediately
+after claiming, the outer loop defensively strips both `ready-for-agent` and
+`ready-for-human` from the sub-issue, so it never sits claimed alongside a
+stale pole left over from a previous run. It then hands the sub-issue off to
+`lib/sub-issue-pipeline` (below), which runs the implement/confirm retry
+loop and closes, merges, or escalates it, before the outer loop moves on to
+recomputing the frontier for the next one -- including after an escalation,
+so one stuck sub-issue never stalls the rest of the run. After each
+sub-issue that's confirmed and merged, the next sub-issue's worktree is
+branched from the run's integration branch (rather than the commit the run
+started at), so later sub-issues build on top of already-completed work
+instead of diverging from stale starting state.
+
+On any non-zero exit from `lib/sub-issue-pipeline` -- including a crash
+before the pipeline's own escalation code ever runs -- the outer loop
+backstops the sub-issue to the same parked-for-human state the pipeline's
+own give-up path sets: unassigned, `ready-for-agent` removed,
+`ready-for-human` added. Every one of those adapter calls is already
+idempotent, so re-running them after a pipeline that *did* escalate cleanly
+on its own is a harmless no-op -- the guarantee is that no open issue is
+ever left claimed but not parked, regardless of how the pipeline fails.
 
 Before starting each sub-issue, a whole-run wall-clock ceiling is checked --
 between attempts only, never in the middle of one:
