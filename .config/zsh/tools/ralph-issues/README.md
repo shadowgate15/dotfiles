@@ -77,14 +77,12 @@ implement-attempt run <worktree-dir> <issue-number> <issue-title>  # -> invokes 
 `--continue` is ever passed, so every call is a wholly new session with no
 memory of any prior attempt beyond what's already committed or present in
 the worktree. Permission checks are fully bypassed so an unattended run
-never stalls waiting on an approval. `--output-format json` is requested
-solely to recover the session's dollar cost: on success, `run` prints the
-session's final response followed by a `COST_USD=<amount>` line (that
-session's `total_cost_usd`), for `lib/sub-issue-pipeline`'s whole-sub-issue
-cost total (below). Exits with the invoked session's exit status, though
-`lib/sub-issue-pipeline` never treats that status as a verdict — retrying a
-failed attempt, verifying its result, and closing the sub-issue are its
-job, not this script's.
+never stalls waiting on an approval. On success, `run` prints the session's
+final response followed by a `COST_USD=<amount>` line (that session's
+`total_cost_usd`), which `lib/sub-issue-pipeline` ignores. Exits with the
+invoked session's exit status, though `lib/sub-issue-pipeline` never treats
+that status as a verdict — retrying a failed attempt, verifying its
+result, and closing the sub-issue are its job, not this script's.
 
 ## `lib/confirmation-attempt`
 
@@ -111,12 +109,12 @@ that in the session's full result envelope, which is what exposes
 `total_cost_usd` alongside the schema-constrained `structured_output`. `run`
 parses that envelope and prints `Confirmation: PASS -- <reason>` or
 `Confirmation: FAIL -- <reason>` followed by a `COST_USD=<amount>` line (that
-session's `total_cost_usd`), for `lib/sub-issue-pipeline`'s whole-sub-issue
-cost total (below). Exits 0 only on a "pass" verdict; a reported "fail", a
-session that errors out, or output that doesn't parse as a verdict all exit
-non-zero — every non-pass outcome is treated as "not confirmed". Retrying,
-escalating, and closing the sub-issue based on this verdict are
-`lib/sub-issue-pipeline`'s job (below), not this script's.
+session's `total_cost_usd`), which `lib/sub-issue-pipeline` strips before
+quoting the output into a comment (below). Exits 0 only on a "pass" verdict;
+a reported "fail", a session that errors out, or output that doesn't parse
+as a verdict all exit non-zero — every non-pass outcome is treated as "not
+confirmed". Retrying, escalating, and closing the sub-issue based on this
+verdict are `lib/sub-issue-pipeline`'s job (below), not this script's.
 
 ## `lib/sub-issue-pipeline`
 
@@ -152,9 +150,10 @@ the last verdict and labels the sub-issue `needs-human` via the adapter,
 leaving its worktree and branch in place rather than discarding them. Exits
 non-zero.
 
-Either way, `run` prints a final `SUBISSUE_COST_USD=<amount>` line — the
-sum of every implement/confirm attempt's `COST_USD=<amount>` for this
-sub-issue — which the `ralph-issues` outer loop (above) ignores.
+The implementing attempt streams directly to the terminal. The confirmation
+attempt's output is captured so it can be quoted into the closing or
+escalation comment, with any `COST_USD=<amount>` bookkeeping line stripped
+out first.
 
 ## `lib/worktree`
 
