@@ -469,6 +469,38 @@ EOF
   [ "${assign_line}" -lt "${strip_human_line}" ]
 }
 
+@test "a successful pipeline run never triggers the give-up backstop" {
+  cd "${GIT_FIXTURE_DIR}"
+  local gh_log="${BATS_TEST_TMPDIR}/gh.log"
+  setup_fake_gh_logging "some-owner/some-repo" 2 7 "Do the thing" "${gh_log}"
+  install_fake_claude "${FAKE_GH_DIR}"
+
+  # A stub pipeline that succeeds without ever calling `gh close` -- the
+  # fake gh's strict catch-all (exit 1 on any unhandled invocation) would
+  # fail this test outright if the backstop fired and tried to unclaim or
+  # relabel on a successful run. It still has to create the integration
+  # branch itself (via the real lib/worktree), matching what the real
+  # pipeline does on a pass, since the outer loop reads that branch
+  # afterwards regardless of what stubbed it.
+  local worktree_bin="${BATS_TEST_DIRNAME}/../lib/worktree"
+  # Args, per bin/ralph-issues's invocation: run repo-root worktree-dir
+  # base-ref repo parent-issue issue-number title [max-attempts].
+  cat >"${BATS_TEST_TMPDIR}/stub-pipeline" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+"${worktree_bin}" create-integration "\${2}" "\${6}" "\${4}" >/dev/null
+exit 0
+EOF
+  chmod +x "${BATS_TEST_TMPDIR}/stub-pipeline"
+
+  SUB_ISSUE_PIPELINE="${BATS_TEST_TMPDIR}/stub-pipeline" run "${RALPH_ISSUES_BIN}" 2
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+  ! grep -q "remove-assignee" "${gh_log}"
+  ! grep -q "add-label ready-for-human" "${gh_log}"
+}
+
 @test "any non-zero pipeline exit backstops to unassigned + ready-for-human, even a pipeline stubbed to crash before its own escalation code" {
   cd "${GIT_FIXTURE_DIR}"
   local gh_log="${BATS_TEST_TMPDIR}/gh.log"

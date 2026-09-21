@@ -229,7 +229,11 @@ main() {
       # code (a bug, an unhandled signal, etc.) -- no open issue must ever be
       # left claimed but not parked. Each adapter call is already a no-op
       # when there's nothing to undo, so re-running them after a pipeline
-      # that *did* escalate cleanly is harmless.
+      # that *did* escalate cleanly is harmless. This also fires if a crash
+      # happens after a successful merge but before the pipeline's own
+      # `close` call -- parking an already-merged issue for human review
+      # rather than leaving it silently claimed is the intentional,
+      # conservative side to fail on.
       "${GITHUB_ADAPTER}" unclaim "${repo}" "${next_number}" >/dev/null
       "${GITHUB_ADAPTER}" unlabel "${repo}" "${next_number}" "${READY_FOR_AGENT_LABEL}" >/dev/null
       "${GITHUB_ADAPTER}" label "${repo}" "${next_number}" "${ESCALATION_LABEL}" >/dev/null
