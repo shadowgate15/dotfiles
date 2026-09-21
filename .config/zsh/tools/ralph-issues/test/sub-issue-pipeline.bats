@@ -87,6 +87,9 @@ case "\$*" in
   "issue close "*"--comment"*) ;;
   "issue comment "*"--body"*) ;;
   "issue edit "*"--add-label"*) ;;
+  "issue edit "*"--remove-label"*) ;;
+  "issue edit "*"--remove-assignee @me") ;;
+  "label create "*) ;;
   *)
     echo "fake gh: unhandled invocation: \$*" >&2
     exit 1
@@ -155,7 +158,7 @@ EOF
   rm -rf "${FAKES_DIR}"
 }
 
-@test "run: exhausting the retry ceiling labels for human follow-up and preserves the worktree and branch" {
+@test "run: exhausting the retry ceiling releases and parks the sub-issue for a human, preserving the worktree and branch" {
   local worktree_dir
   worktree_dir="$("${WORKTREE}" create "${GIT_FIXTURE_DIR}" 9 "${BASE_REF}")"
 
@@ -179,10 +182,12 @@ EOF
   run git -C "${GIT_FIXTURE_DIR}" show-ref --verify --quiet "refs/heads/ralph-issues/issue-9"
   [ "$status" -eq 0 ]
 
-  # Never closed, never merged -- labeled and commented instead.
+  # Never closed, never merged -- commented, relabeled, and unassigned instead.
   ! grep -q "issue close" "${FAKES_DIR}/gh.log"
   grep -q "issue comment 9 --repo some-owner/some-repo --body" "${FAKES_DIR}/gh.log"
-  grep -q "issue edit 9 --repo some-owner/some-repo --add-label needs-human" "${FAKES_DIR}/gh.log"
+  grep -q "issue edit 9 --repo some-owner/some-repo --remove-label ready-for-agent" "${FAKES_DIR}/gh.log"
+  grep -q "issue edit 9 --repo some-owner/some-repo --add-label ready-for-human" "${FAKES_DIR}/gh.log"
+  grep -q "issue edit 9 --repo some-owner/some-repo --remove-assignee @me" "${FAKES_DIR}/gh.log"
 
   local integration_path
   integration_path="$("${WORKTREE}" integration-path "${GIT_FIXTURE_DIR}" 1)"
@@ -191,7 +196,7 @@ EOF
   rm -rf "${FAKES_DIR}"
 }
 
-@test "run: a merge conflict against the integration branch fails loudly without closing or discarding" {
+@test "run: a merge conflict against the integration branch fails loudly, without closing or discarding, and parks the sub-issue for a human" {
   local worktree_dir
   worktree_dir="$("${WORKTREE}" create "${GIT_FIXTURE_DIR}" 10 "${BASE_REF}")"
 
@@ -230,6 +235,12 @@ EOF
   # Left in place for manual resolution, never closed.
   [ -d "${worktree_dir}" ]
   ! grep -q "issue close" "${FAKES_DIR}/gh.log"
+
+  # Commented, relabeled, and unassigned, same as a retry-exhaustion escalation.
+  grep -q "issue comment 10 --repo some-owner/some-repo --body" "${FAKES_DIR}/gh.log"
+  grep -q "issue edit 10 --repo some-owner/some-repo --remove-label ready-for-agent" "${FAKES_DIR}/gh.log"
+  grep -q "issue edit 10 --repo some-owner/some-repo --add-label ready-for-human" "${FAKES_DIR}/gh.log"
+  grep -q "issue edit 10 --repo some-owner/some-repo --remove-assignee @me" "${FAKES_DIR}/gh.log"
 
   git -C "${integration_path}" merge --abort 2>/dev/null || true
   rm -rf "${FAKES_DIR}"

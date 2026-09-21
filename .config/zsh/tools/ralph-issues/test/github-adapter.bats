@@ -57,7 +57,7 @@ Body text with no blockers.'
 set -euo pipefail
 case "$*" in
   "api repos/some-owner/some-repo/issues/11/sub_issues --jq"*)
-    echo '[{"number":5,"state":"closed","blocked_by":0,"assignees":[]},{"number":6,"state":"open","blocked_by":1,"assignees":[]},{"number":7,"state":"open","blocked_by":0,"assignees":[]}]'
+    echo '[{"number":5,"state":"closed","blocked_by":0,"assignees":[],"labels":[]},{"number":6,"state":"open","blocked_by":1,"assignees":[],"labels":["ready-for-agent"]},{"number":7,"state":"open","blocked_by":0,"assignees":[],"labels":[]}]'
     ;;
   *)
     echo "fake gh: unhandled invocation: $*" >&2
@@ -71,7 +71,7 @@ EOF
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [ "$output" = '{"shape":"native","sub_issues":[{"number":6,"blocked_by":1,"assignees":[]},{"number":7,"blocked_by":0,"assignees":[]}]}' ]
+  [ "$output" = '{"shape":"native","sub_issues":[{"number":6,"blocked_by":1,"assignees":[],"labels":["ready-for-agent"]},{"number":7,"blocked_by":0,"assignees":[],"labels":[]}]}' ]
 }
 
 # frontier-input: checklist fallback shape, gh mocked.
@@ -88,11 +88,11 @@ case "$*" in
   "issue view 11 --repo some-owner/some-repo --json body --jq"*)
     printf '%s\n' '- [ ] #13' '- [ ] #12'
     ;;
-  "issue view 13 --repo some-owner/some-repo --json body,state,assignees --jq"*)
-    echo '{"body":"Part of #11\nBlocked by: #12","state":"OPEN","assignees":[]}'
+  "issue view 13 --repo some-owner/some-repo --json body,state,assignees,labels --jq"*)
+    echo '{"body":"Part of #11\nBlocked by: #12","state":"OPEN","assignees":[],"labels":["ready-for-agent"]}'
     ;;
-  "issue view 12 --repo some-owner/some-repo --json body,state,assignees --jq"*)
-    echo '{"body":"Part of #11","state":"OPEN","assignees":[]}'
+  "issue view 12 --repo some-owner/some-repo --json body,state,assignees,labels --jq"*)
+    echo '{"body":"Part of #11","state":"OPEN","assignees":[],"labels":[]}'
     ;;
   *)
     echo "fake gh: unhandled invocation: $*" >&2
@@ -106,7 +106,7 @@ EOF
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [ "$output" = '{"shape":"checklist","checklist_order":[13,12],"issues":{"13":{"blocked_by":[12],"assignees":[]},"12":{"blocked_by":[],"assignees":[]}},"open_issues":[13,12]}' ]
+  [ "$output" = '{"shape":"checklist","checklist_order":[13,12],"issues":{"13":{"blocked_by":[12],"assignees":[],"labels":["ready-for-agent"]},"12":{"blocked_by":[],"assignees":[],"labels":[]}},"open_issues":[13,12]}' ]
 }
 
 @test "frontier-input: a closed checklist candidate is excluded from checklist_order" {
@@ -121,11 +121,11 @@ case "$*" in
   "issue view 11 --repo some-owner/some-repo --json body --jq"*)
     printf '%s\n' '- [ ] #13' '- [ ] #12'
     ;;
-  "issue view 13 --repo some-owner/some-repo --json body,state,assignees --jq"*)
-    echo '{"body":"Part of #11","state":"CLOSED","assignees":[]}'
+  "issue view 13 --repo some-owner/some-repo --json body,state,assignees,labels --jq"*)
+    echo '{"body":"Part of #11","state":"CLOSED","assignees":[],"labels":[]}'
     ;;
-  "issue view 12 --repo some-owner/some-repo --json body,state,assignees --jq"*)
-    echo '{"body":"Part of #11","state":"OPEN","assignees":[]}'
+  "issue view 12 --repo some-owner/some-repo --json body,state,assignees,labels --jq"*)
+    echo '{"body":"Part of #11","state":"OPEN","assignees":[],"labels":["ready-for-agent"]}'
     ;;
   *)
     echo "fake gh: unhandled invocation: $*" >&2
@@ -139,7 +139,7 @@ EOF
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [ "$output" = '{"shape":"checklist","checklist_order":[12],"issues":{"12":{"blocked_by":[],"assignees":[]}},"open_issues":[12]}' ]
+  [ "$output" = '{"shape":"checklist","checklist_order":[12],"issues":{"12":{"blocked_by":[],"assignees":[],"labels":["ready-for-agent"]}},"open_issues":[12]}' ]
 }
 
 @test "frontier-input: a checklist candidate missing the 'Part of #<parent>' marker is excluded" {
@@ -154,11 +154,11 @@ case "$*" in
   "issue view 11 --repo some-owner/some-repo --json body --jq"*)
     printf '%s\n' '- [ ] #99' '- [ ] #12'
     ;;
-  "issue view 99 --repo some-owner/some-repo --json body,state,assignees --jq"*)
-    echo '{"body":"Not part of this parent at all.","state":"OPEN","assignees":[]}'
+  "issue view 99 --repo some-owner/some-repo --json body,state,assignees,labels --jq"*)
+    echo '{"body":"Not part of this parent at all.","state":"OPEN","assignees":[],"labels":[]}'
     ;;
-  "issue view 12 --repo some-owner/some-repo --json body,state,assignees --jq"*)
-    echo '{"body":"Part of #11","state":"OPEN","assignees":[]}'
+  "issue view 12 --repo some-owner/some-repo --json body,state,assignees,labels --jq"*)
+    echo '{"body":"Part of #11","state":"OPEN","assignees":[],"labels":["ready-for-agent"]}'
     ;;
   *)
     echo "fake gh: unhandled invocation: $*" >&2
@@ -172,7 +172,7 @@ EOF
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [ "$output" = '{"shape":"checklist","checklist_order":[12],"issues":{"12":{"blocked_by":[],"assignees":[]}},"open_issues":[12]}' ]
+  [ "$output" = '{"shape":"checklist","checklist_order":[12],"issues":{"12":{"blocked_by":[],"assignees":[],"labels":["ready-for-agent"]}},"open_issues":[12]}' ]
 }
 
 # Remaining operations: assert the exact `gh` invocation each one shells out to.
@@ -190,6 +190,21 @@ EOF
 
   [ "$status" -eq 0 ]
   [ "$output" = "gh issue edit 4 --repo some-owner/some-repo --add-assignee @me" ]
+}
+
+@test "unclaim shells out to gh issue edit --remove-assignee @me" {
+  FAKE_GH_DIR="$(mktemp -d)"
+  cat >"${FAKE_GH_DIR}/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "gh $*"
+EOF
+  chmod +x "${FAKE_GH_DIR}/gh"
+
+  PATH="${FAKE_GH_DIR}:${PATH}" run "${GITHUB_ADAPTER}" unclaim some-owner/some-repo 4
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "gh issue edit 4 --repo some-owner/some-repo --remove-assignee @me" ]
 }
 
 @test "comment shells out to gh issue comment --body" {
@@ -237,7 +252,7 @@ EOF
   [ "$output" = "gh issue close 4 --repo some-owner/some-repo --comment all done" ]
 }
 
-@test "label shells out to gh issue edit --add-label" {
+@test "label ensures the label exists then adds it" {
   FAKE_GH_DIR="$(mktemp -d)"
   cat >"${FAKE_GH_DIR}/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -245,11 +260,28 @@ echo "gh $*"
 EOF
   chmod +x "${FAKE_GH_DIR}/gh"
 
-  PATH="${FAKE_GH_DIR}:${PATH}" run "${GITHUB_ADAPTER}" label some-owner/some-repo 4 needs-human
+  PATH="${FAKE_GH_DIR}:${PATH}" run "${GITHUB_ADAPTER}" label some-owner/some-repo 4 ready-for-human
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [ "$output" = "gh issue edit 4 --repo some-owner/some-repo --add-label needs-human" ]
+  [ "$output" = "$(printf '%s\n%s' \
+    "gh label create ready-for-human --repo some-owner/some-repo --force" \
+    "gh issue edit 4 --repo some-owner/some-repo --add-label ready-for-human")" ]
+}
+
+@test "unlabel shells out to gh issue edit --remove-label" {
+  FAKE_GH_DIR="$(mktemp -d)"
+  cat >"${FAKE_GH_DIR}/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "gh $*"
+EOF
+  chmod +x "${FAKE_GH_DIR}/gh"
+
+  PATH="${FAKE_GH_DIR}:${PATH}" run "${GITHUB_ADAPTER}" unlabel some-owner/some-repo 4 ready-for-human
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "gh issue edit 4 --repo some-owner/some-repo --remove-label ready-for-human" ]
 }
 
 @test "rejects an unknown subcommand" {

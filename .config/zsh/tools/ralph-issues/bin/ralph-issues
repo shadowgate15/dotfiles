@@ -6,10 +6,15 @@ LIB_DIR="${SCRIPT_DIR}/../lib"
 GITHUB_ADAPTER="${LIB_DIR}/github-adapter"
 FRONTIER_QUERY="${LIB_DIR}/frontier-query"
 WORKTREE="${LIB_DIR}/worktree"
-SUB_ISSUE_PIPELINE="${LIB_DIR}/sub-issue-pipeline"
+# Overridable so bats can substitute a stub (e.g. one that crashes before
+# its own escalation code runs) to exercise the outer loop's backstop below
+# without a real implement/confirm pipeline.
+SUB_ISSUE_PIPELINE="${SUB_ISSUE_PIPELINE:-${LIB_DIR}/sub-issue-pipeline}"
 
 DEFAULT_MAX_ATTEMPTS=3
 DEFAULT_MAX_MINUTES=240
+READY_FOR_AGENT_LABEL="ready-for-agent"
+ESCALATION_LABEL="ready-for-human"
 
 usage() {
   cat <<'EOF'
@@ -200,6 +205,14 @@ main() {
     echo "Worktree: ${worktree_dir} (branch ${worktree_branch})"
 
     "${GITHUB_ADAPTER}" claim "${repo}" "${next_number}" >/dev/null
+
+    # Defensively strip both poles right after assigning, so a sub-issue
+    # never sits claimed alongside a stale ready-for-agent or ready-for-human
+    # label left over from a previous run -- regardless of pipeline outcome,
+    # exactly one of those two labels (if either) is meaningful once this
+    # sub-issue is actually done, and that's decided below, not here.
+    "${GITHUB_ADAPTER}" unlabel "${repo}" "${next_number}" "${READY_FOR_AGENT_LABEL}" >/dev/null
+    "${GITHUB_ADAPTER}" unlabel "${repo}" "${next_number}" "${ESCALATION_LABEL}" >/dev/null
     echo "Claimed #${next_number}"
 
     echo "Running implement/confirm pipeline for #${next_number} in ${worktree_dir}..."
@@ -208,6 +221,23 @@ main() {
     "${SUB_ISSUE_PIPELINE}" run "${repo_root}" "${worktree_dir}" "${base_ref}" "${repo}" \
       "${parent_issue}" "${next_number}" "${next_title}" "${max_attempts}" \
       || pipeline_status=$?
+
+    if [[ ${pipeline_status} -ne 0 ]]; then
+      # Safety-net backstop: idempotently re-apply the same parked-for-human
+      # state the pipeline's own escalation path already sets on a normal
+      # give-up, in case the pipeline instead crashed before reaching that
+      # code (a bug, an unhandled signal, etc.) -- no open issue must ever be
+      # left claimed but not parked. Each adapter call is already a no-op
+      # when there's nothing to undo, so re-running them after a pipeline
+      # that *did* escalate cleanly is harmless. This also fires if a crash
+      # happens after a successful merge but before the pipeline's own
+      # `close` call -- parking an already-merged issue for human review
+      # rather than leaving it silently claimed is the intentional,
+      # conservative side to fail on.
+      "${GITHUB_ADAPTER}" unclaim "${repo}" "${next_number}" >/dev/null
+      "${GITHUB_ADAPTER}" unlabel "${repo}" "${next_number}" "${READY_FOR_AGENT_LABEL}" >/dev/null
+      "${GITHUB_ADAPTER}" label "${repo}" "${next_number}" "${ESCALATION_LABEL}" >/dev/null
+    fi
 
     if [[ ${pipeline_status} -eq 0 ]]; then
       processed+=("#${next_number} ${next_title} -- confirmed and closed")

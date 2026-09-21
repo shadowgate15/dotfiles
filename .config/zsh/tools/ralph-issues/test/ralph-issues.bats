@@ -83,6 +83,10 @@ case "\$*" in
     ;;
   "issue edit ${4} --repo ${1} --add-assignee @me")
     ;;
+  "issue edit ${4} --repo ${1} --remove-label ready-for-agent")
+    ;;
+  "issue edit ${4} --repo ${1} --remove-label ready-for-human")
+    ;;
   "issue close ${4} --repo ${1} --comment"*)
     echo "closed" >"${state_file}"
     ;;
@@ -100,7 +104,7 @@ EOF
 @test "prints the next ready sub-issue's number and title, inferring the repo from git remote" {
   cd "${GIT_FIXTURE_DIR}"
   setup_fake_gh "some-owner/some-repo" 2 \
-    '[{"number":7,"state":"open","blocked_by":0,"assignees":[]}]' \
+    '[{"number":7,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' \
     7 "Do the thing"
 
   run "${RALPH_ISSUES_BIN}" 2
@@ -125,7 +129,7 @@ EOF
   cd "${GIT_FIXTURE_DIR}"
   git remote set-url origin "https://github.com/some-owner/some-repo.git"
   setup_fake_gh "some-owner/some-repo" 7 \
-    '[{"number":9,"state":"open","blocked_by":0,"assignees":[]}]' \
+    '[{"number":9,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' \
     9 "Another thing"
 
   run "${RALPH_ISSUES_BIN}" 7
@@ -139,7 +143,7 @@ EOF
 @test "accepts a --repo override instead of inferring from git remote" {
   cd "${GIT_FIXTURE_DIR}"
   setup_fake_gh "other-owner/other-repo" 2 \
-    '[{"number":3,"state":"open","blocked_by":0,"assignees":[]}]' \
+    '[{"number":3,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' \
     3 "Third thing"
 
   run "${RALPH_ISSUES_BIN}" 2 --repo other-owner/other-repo
@@ -153,7 +157,7 @@ EOF
 @test "accepts a --max-attempts override and threads it into the pipeline" {
   cd "${GIT_FIXTURE_DIR}"
   setup_fake_gh "some-owner/some-repo" 2 \
-    '[{"number":7,"state":"open","blocked_by":0,"assignees":[]}]' \
+    '[{"number":7,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' \
     7 "Do the thing"
 
   run "${RALPH_ISSUES_BIN}" 2 --max-attempts 1
@@ -182,9 +186,9 @@ phase="\$(cat "${phase_file}")"
 case "\$*" in
   "api repos/some-owner/some-repo/issues/2/sub_issues --jq"*)
     case "\${phase}" in
-      0) echo '[{"number":7,"state":"open","blocked_by":0,"assignees":[]},{"number":8,"state":"open","blocked_by":0,"assignees":[]}]' ;;
-      1) echo '[{"number":7,"state":"closed","blocked_by":0,"assignees":[]},{"number":8,"state":"open","blocked_by":0,"assignees":[]}]' ;;
-      *) echo '[{"number":7,"state":"closed","blocked_by":0,"assignees":[]},{"number":8,"state":"closed","blocked_by":0,"assignees":[]}]' ;;
+      0) echo '[{"number":7,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]},{"number":8,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' ;;
+      1) echo '[{"number":7,"state":"closed","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]},{"number":8,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' ;;
+      *) echo '[{"number":7,"state":"closed","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]},{"number":8,"state":"closed","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' ;;
     esac
     ;;
   "issue view 7 --repo some-owner/some-repo --json title --jq .title")
@@ -195,6 +199,10 @@ case "\$*" in
     ;;
   "issue edit 7 --repo some-owner/some-repo --add-assignee @me") ;;
   "issue edit 8 --repo some-owner/some-repo --add-assignee @me") ;;
+  "issue edit 7 --repo some-owner/some-repo --remove-label ready-for-agent") ;;
+  "issue edit 8 --repo some-owner/some-repo --remove-label ready-for-agent") ;;
+  "issue edit 7 --repo some-owner/some-repo --remove-label ready-for-human") ;;
+  "issue edit 8 --repo some-owner/some-repo --remove-label ready-for-human") ;;
   "issue close 7 --repo some-owner/some-repo --comment"*)
     echo 1 >"${phase_file}"
     ;;
@@ -367,4 +375,156 @@ EOF
   [[ "$output" == *"repo"* ]]
 
   rm -rf "${bare_dir}"
+}
+
+# Claim strips both poles, and the outer loop backstops any non-zero
+# pipeline exit -- including a stubbed crash before the pipeline's own
+# escalation code runs -- to unassigned + ready-for-human.
+
+# $1: repo, $2: parent issue, $3: next issue number, $4: next title,
+# $5: log file every matched gh invocation is appended to.
+#
+# Stateful: the sub_issues response reflects whatever assignment/labels have
+# actually been applied so far, rather than a static fixture -- otherwise
+# the outer loop would see the same "still ready" issue forever and loop.
+setup_fake_gh_logging() {
+  FAKE_GH_DIR="$(mktemp -d)"
+  local assignee_file="${FAKE_GH_DIR}/assignee" labels_file="${FAKE_GH_DIR}/labels"
+  : >"$5"
+  : >"${assignee_file}"
+  echo "ready-for-agent" >"${labels_file}"
+  cat >"${FAKE_GH_DIR}/gh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+echo "gh \$*" >>"$5"
+case "\$*" in
+  "api repos/${1}/issues/${2}/sub_issues --jq"*)
+    assignees_json="[]"
+    [[ -s "${assignee_file}" ]] && assignees_json='["some-owner"]'
+    labels_json="\$(jq -R -s -c 'split("\n") | map(select(length > 0))' <"${labels_file}")"
+    jq -n --argjson assignees "\${assignees_json}" --argjson labels "\${labels_json}" \
+      '[{number: ${3}, state: "open", blocked_by: 0, assignees: \$assignees, labels: \$labels}]'
+    ;;
+  "issue view ${3} --repo ${1} --json title --jq .title")
+    echo "${4}"
+    ;;
+  "issue edit ${3} --repo ${1} --add-assignee @me")
+    echo "assigned" >"${assignee_file}"
+    ;;
+  "issue edit ${3} --repo ${1} --remove-assignee @me")
+    : >"${assignee_file}"
+    ;;
+  "issue edit ${3} --repo ${1} --remove-label ready-for-agent")
+    grep -v '^ready-for-agent\$' "${labels_file}" >"${labels_file}.tmp" || true
+    mv "${labels_file}.tmp" "${labels_file}"
+    ;;
+  "issue edit ${3} --repo ${1} --remove-label ready-for-human")
+    grep -v '^ready-for-human\$' "${labels_file}" >"${labels_file}.tmp" || true
+    mv "${labels_file}.tmp" "${labels_file}"
+    ;;
+  "label create ready-for-human --repo ${1} --force") ;;
+  "issue edit ${3} --repo ${1} --add-label ready-for-human")
+    echo "ready-for-human" >>"${labels_file}"
+    ;;
+  *)
+    echo "fake gh: unhandled invocation: \$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+  chmod +x "${FAKE_GH_DIR}/gh"
+  PATH="${FAKE_GH_DIR}:${PATH}"
+}
+
+@test "claim defensively strips both ready-for-agent and ready-for-human right after assigning" {
+  cd "${GIT_FIXTURE_DIR}"
+  local gh_log="${BATS_TEST_TMPDIR}/gh.log"
+  setup_fake_gh_logging "some-owner/some-repo" 2 7 "Do the thing" "${gh_log}"
+  install_fake_claude "${FAKE_GH_DIR}"
+
+  local assign_line strip_agent_line strip_human_line
+  # The claim-strip happens unconditionally, before the pipeline is even
+  # invoked -- a stub that immediately fails is enough to isolate that
+  # ordering from the separate give-up backstop covered below, without
+  # needing to fake a real merge into an integration branch.
+  cat >"${BATS_TEST_TMPDIR}/stub-pipeline" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "${BATS_TEST_TMPDIR}/stub-pipeline"
+
+  SUB_ISSUE_PIPELINE="${BATS_TEST_TMPDIR}/stub-pipeline" run "${RALPH_ISSUES_BIN}" 2
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+
+  assign_line="$(grep -n "issue edit 7 --repo some-owner/some-repo --add-assignee @me" "${gh_log}" | head -n1 | cut -d: -f1)"
+  strip_agent_line="$(grep -n "issue edit 7 --repo some-owner/some-repo --remove-label ready-for-agent" "${gh_log}" | head -n1 | cut -d: -f1)"
+  strip_human_line="$(grep -n "issue edit 7 --repo some-owner/some-repo --remove-label ready-for-human" "${gh_log}" | head -n1 | cut -d: -f1)"
+
+  [ -n "${assign_line}" ]
+  [ -n "${strip_agent_line}" ]
+  [ -n "${strip_human_line}" ]
+  [ "${assign_line}" -lt "${strip_agent_line}" ]
+  [ "${assign_line}" -lt "${strip_human_line}" ]
+}
+
+@test "a successful pipeline run never triggers the give-up backstop" {
+  cd "${GIT_FIXTURE_DIR}"
+  local gh_log="${BATS_TEST_TMPDIR}/gh.log"
+  setup_fake_gh_logging "some-owner/some-repo" 2 7 "Do the thing" "${gh_log}"
+  install_fake_claude "${FAKE_GH_DIR}"
+
+  # A stub pipeline that succeeds without ever calling `gh close` -- the
+  # fake gh's strict catch-all (exit 1 on any unhandled invocation) would
+  # fail this test outright if the backstop fired and tried to unclaim or
+  # relabel on a successful run. It still has to create the integration
+  # branch itself (via the real lib/worktree), matching what the real
+  # pipeline does on a pass, since the outer loop reads that branch
+  # afterwards regardless of what stubbed it.
+  local worktree_bin="${BATS_TEST_DIRNAME}/../lib/worktree"
+  # Args, per bin/ralph-issues's invocation: run repo-root worktree-dir
+  # base-ref repo parent-issue issue-number title [max-attempts].
+  cat >"${BATS_TEST_TMPDIR}/stub-pipeline" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+"${worktree_bin}" create-integration "\${2}" "\${6}" "\${4}" >/dev/null
+exit 0
+EOF
+  chmod +x "${BATS_TEST_TMPDIR}/stub-pipeline"
+
+  SUB_ISSUE_PIPELINE="${BATS_TEST_TMPDIR}/stub-pipeline" run "${RALPH_ISSUES_BIN}" 2
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+  ! grep -q "remove-assignee" "${gh_log}"
+  ! grep -q "add-label ready-for-human" "${gh_log}"
+}
+
+@test "any non-zero pipeline exit backstops to unassigned + ready-for-human, even a pipeline stubbed to crash before its own escalation code" {
+  cd "${GIT_FIXTURE_DIR}"
+  local gh_log="${BATS_TEST_TMPDIR}/gh.log"
+  setup_fake_gh_logging "some-owner/some-repo" 2 7 "Do the thing" "${gh_log}"
+  install_fake_claude "${FAKE_GH_DIR}"
+
+  # Simulates a crash before the pipeline's own escalation path (comment,
+  # unlabel/label, unclaim) ever runs -- it does nothing but exit non-zero.
+  cat >"${BATS_TEST_TMPDIR}/crashing-pipeline" <<'EOF'
+#!/usr/bin/env bash
+echo "boom: simulated crash before escalation code" >&2
+exit 1
+EOF
+  chmod +x "${BATS_TEST_TMPDIR}/crashing-pipeline"
+
+  SUB_ISSUE_PIPELINE="${BATS_TEST_TMPDIR}/crashing-pipeline" run "${RALPH_ISSUES_BIN}" 2
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"escalated for human follow-up"* ]]
+
+  grep -q "issue edit 7 --repo some-owner/some-repo --remove-assignee @me" "${gh_log}"
+  grep -q "issue edit 7 --repo some-owner/some-repo --add-label ready-for-human" "${gh_log}"
+
+  # Never closed -- the crash happened before any confirmation could pass.
+  ! grep -q "issue close" "${gh_log}"
 }

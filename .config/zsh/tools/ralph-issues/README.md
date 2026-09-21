@@ -21,7 +21,8 @@ ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>] [-
 
 `--repo` defaults to the current checkout's repo, inferred from `git remote -v`.
 The tool loops: it recomputes the frontier, works the next ready sub-issue
-(the first one with no open blocker and no assignee) to completion, then
+(the first one with no open blocker, no assignee, and a `ready-for-agent`
+label) to completion, then
 recomputes the frontier again -- repeating until the frontier query returns
 no further ready sub-issue, or the whole-run ceiling is hit. Sub-issues are
 always processed strictly one at a time, in frontier order, never in
@@ -30,15 +31,27 @@ worktree and branch scoped to that sub-issue (`lib/worktree`, below) and
 claims it via the adapter, so an in-progress or abandoned attempt on one
 sub-issue can never contaminate another's starting state. Running the tool
 again while a sub-issue is still assigned does not re-claim it or create a
-second worktree — the frontier query skips assigned issues. It then hands
-the sub-issue off to `lib/sub-issue-pipeline` (below), which runs the
-implement/confirm retry loop and closes, merges, or escalates it, before
-the outer loop moves on to recomputing the frontier for the next one --
-including after an escalation, so one stuck sub-issue never stalls the rest
-of the run. After each sub-issue that's confirmed and merged, the next
-sub-issue's worktree is branched from the run's integration branch (rather
-than the commit the run started at), so later sub-issues build on top of
-already-completed work instead of diverging from stale starting state.
+second worktree — the frontier query skips assigned issues. Immediately
+after claiming, the outer loop defensively strips both `ready-for-agent` and
+`ready-for-human` from the sub-issue, so it never sits claimed alongside a
+stale pole left over from a previous run. It then hands the sub-issue off to
+`lib/sub-issue-pipeline` (below), which runs the implement/confirm retry
+loop and closes, merges, or escalates it, before the outer loop moves on to
+recomputing the frontier for the next one -- including after an escalation,
+so one stuck sub-issue never stalls the rest of the run. After each
+sub-issue that's confirmed and merged, the next sub-issue's worktree is
+branched from the run's integration branch (rather than the commit the run
+started at), so later sub-issues build on top of already-completed work
+instead of diverging from stale starting state.
+
+On any non-zero exit from `lib/sub-issue-pipeline` -- including a crash
+before the pipeline's own escalation code ever runs -- the outer loop
+backstops the sub-issue to the same parked-for-human state the pipeline's
+own give-up path sets: unassigned, `ready-for-agent` removed,
+`ready-for-human` added. Every one of those adapter calls is already
+idempotent, so re-running them after a pipeline that *did* escalate cleanly
+on its own is a harmless no-op -- the guarantee is that no open issue is
+ever left claimed but not parked, regardless of how the pipeline fails.
 
 Before starting each sub-issue, a whole-run wall-clock ceiling is checked --
 between attempts only, never in the middle of one:
@@ -147,15 +160,14 @@ On a passing confirmation: merges the sub-issue's branch into
 created via `lib/worktree`'s `create-integration` if it doesn't exist yet),
 discards the sub-issue's worktree (`lib/worktree discard`), and only then
 closes the sub-issue via the adapter with a summary comment — in that order,
-so a merge conflict is caught before anything is closed or discarded. If the
-merge itself fails (e.g. a genuine conflict against the integration branch),
-the sub-issue is left open, unclosed, and its worktree/branch untouched, for
-manual resolution.
+so a merge conflict is caught before anything is closed or discarded.
 
-On exhausting `<max-attempts>` without a pass: posts a comment summarizing
-the last verdict and labels the sub-issue `needs-human` via the adapter,
-leaving its worktree and branch in place rather than discarding them. Exits
-non-zero.
+Both terminal give-up paths — exhausting `<max-attempts>` without a pass, and
+a merge conflict against the integration branch — release the sub-issue and
+park it for a human the same way: post a comment, remove the
+`ready-for-agent` label, add `ready-for-human`, and unassign it via the
+adapter, leaving its worktree and branch in place rather than discarding
+them. Exits non-zero.
 
 The implementing attempt streams directly to the terminal. The confirmation
 attempt's output is captured so it can be quoted into the closing or
@@ -201,9 +213,11 @@ same interface without touching orchestration logic.
 github-adapter frontier-input <owner/repo> <parent-issue>   # -> lib/frontier-query's input JSON
 github-adapter title <owner/repo> <issue>                   # -> issue title
 github-adapter claim <owner/repo> <issue>                    # assign to @me
+github-adapter unclaim <owner/repo> <issue>                  # remove @me's assignment
 github-adapter comment <owner/repo> <issue> <body>           # post a comment
 github-adapter close <owner/repo> <issue> [<closing-comment>]
-github-adapter label <owner/repo> <issue> <label>             # e.g. flag for human follow-up
+github-adapter label <owner/repo> <issue> <label>            # e.g. flag for human follow-up; creates the label if missing
+github-adapter unlabel <owner/repo> <issue> <label>          # remove a label (no-op if absent)
 ```
 
 `frontier-input` lists a parent's open sub-issues in tracker-native order and
@@ -223,17 +237,19 @@ Claude Code calls — callers (the future orchestrator) are responsible for
 fetching tracker state and shaping it into one of two input shapes:
 
 - `"shape": "native"` — a `sub_issues` array in tracker-native order, each
-  with a `blocked_by` open-blocker count and an `assignees` array, for
-  parents using GitHub's native sub-issue/dependency data.
+  with a `blocked_by` open-blocker count, an `assignees` array, and a
+  `labels` array, for parents using GitHub's native sub-issue/dependency
+  data.
 - `"shape": "checklist"` — a `checklist_order` array of issue numbers, an
   `issues` map keyed by issue number (each with a `blocked_by` array of
-  blocker issue numbers and an `assignees` array), and an `open_issues`
-  array of currently-open issue numbers, for parents predating native
-  sub-issues that instead use a checklist body plus a `Part of #<parent>`
-  marker.
+  blocker issue numbers, an `assignees` array, and a `labels` array), and an
+  `open_issues` array of currently-open issue numbers, for parents predating
+  native sub-issues that instead use a checklist body plus a
+  `Part of #<parent>` marker.
 
 In both shapes the decision is the same: the first issue, in the given
-order, with no open blocker and no assignee; `null` if none qualify.
+order, with no open blocker, no assignee, and a `ready-for-agent` label;
+`null` if none qualify.
 
 ## Running tests
 
