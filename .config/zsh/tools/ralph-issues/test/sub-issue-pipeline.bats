@@ -42,8 +42,8 @@ teardown() {
   [[ "$output" == *"left in place for human follow-up"* ]]
 }
 
-@test "strip_cost_line: removes COST_USD lines, leaving the rest intact" {
-  run bash -c 'source "$1"; strip_cost_line "$2"' _ "${PIPELINE}" "$(printf 'Confirmation: PASS -- all good\nCOST_USD=0.05')"
+@test "strip_context_tokens_line: removes CONTEXT_TOKENS lines, leaving the rest intact" {
+  run bash -c 'source "$1"; strip_context_tokens_line "$2"' _ "${PIPELINE}" "$(printf 'Confirmation: PASS -- all good\nCONTEXT_TOKENS=1234')"
   [ "$status" -eq 0 ]
   [ "$output" = "Confirmation: PASS -- all good" ]
 }

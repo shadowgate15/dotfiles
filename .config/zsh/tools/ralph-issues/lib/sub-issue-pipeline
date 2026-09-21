@@ -71,10 +71,10 @@ build_escalation_comment() {
     "${max_attempts}" "${confirmation_output}"
 }
 
-# Removes `COST_USD=...` bookkeeping lines before attempt output is quoted
-# back into a human-facing GitHub comment.
-strip_cost_line() {
-  grep -v '^COST_USD=' <<<"$1" || true
+# Removes `CONTEXT_TOKENS=...` bookkeeping lines before attempt output is
+# quoted back into a human-facing GitHub comment.
+strip_context_tokens_line() {
+  grep -v '^CONTEXT_TOKENS=' <<<"$1" || true
 }
 
 merge_into_integration() {
@@ -116,7 +116,7 @@ cmd_run() {
     confirmation_output="$(cat "${confirm_tmp}")"
     rm -f "${confirm_tmp}"
 
-    confirmation_output="$(strip_cost_line "${confirmation_output}")"
+    confirmation_output="$(strip_context_tokens_line "${confirmation_output}")"
 
     if [[ ${confirm_status} -eq 0 ]]; then
       merge_into_integration "${repo_root}" "${parent}" "${issue}" "${base_ref}" \

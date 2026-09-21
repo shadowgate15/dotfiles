@@ -77,12 +77,17 @@ implement-attempt run <worktree-dir> <issue-number> <issue-title>  # -> invokes 
 `--continue` is ever passed, so every call is a wholly new session with no
 memory of any prior attempt beyond what's already committed or present in
 the worktree. Permission checks are fully bypassed so an unattended run
-never stalls waiting on an approval. On success, `run` prints the session's
-final response followed by a `COST_USD=<amount>` line (that session's
-`total_cost_usd`), which `lib/sub-issue-pipeline` ignores. Exits with the
-invoked session's exit status, though `lib/sub-issue-pipeline` never treats
-that status as a verdict — retrying a failed attempt, verifying its
-result, and closing the sub-issue are its job, not this script's.
+never stalls waiting on an approval. `--output-format json` is requested
+solely to expose the session's top-level `usage` object. On success, `run`
+prints the session's final response followed by a `CONTEXT_TOKENS=<n>` line
+— the sum of `usage.input_tokens`, `usage.cache_read_input_tokens`, and
+`usage.cache_creation_input_tokens`, an approximation of how full the
+context window got on the session's final turn — which `lib/sub-issue-pipeline`
+ignores. This is purely informational: never summed across attempts, never
+enforced. Exits with the invoked session's exit status, though
+`lib/sub-issue-pipeline` never treats that status as a verdict — retrying a
+failed attempt, verifying its result, and closing the sub-issue are its
+job, not this script's.
 
 ## `lib/confirmation-attempt`
 
@@ -105,16 +110,18 @@ commands itself (no per-repo configuration), then invokes the `code-review`
 skill's Standards+Spec review against `git diff <base-ref>...HEAD`. Its
 final answer is constrained by `--json-schema` to
 `{"verdict": "pass"|"fail", "reason": "..."}`; `--output-format json` wraps
-that in the session's full result envelope, which is what exposes
-`total_cost_usd` alongside the schema-constrained `structured_output`. `run`
-parses that envelope and prints `Confirmation: PASS -- <reason>` or
-`Confirmation: FAIL -- <reason>` followed by a `COST_USD=<amount>` line (that
-session's `total_cost_usd`), which `lib/sub-issue-pipeline` strips before
-quoting the output into a comment (below). Exits 0 only on a "pass" verdict;
-a reported "fail", a session that errors out, or output that doesn't parse
-as a verdict all exit non-zero — every non-pass outcome is treated as "not
-confirmed". Retrying, escalating, and closing the sub-issue based on this
-verdict are `lib/sub-issue-pipeline`'s job (below), not this script's.
+that in the session's full result envelope, which is what exposes both the
+schema-constrained `structured_output` and the top-level `usage` object.
+`run` parses that envelope and prints `Confirmation: PASS -- <reason>` or
+`Confirmation: FAIL -- <reason>` followed by a `CONTEXT_TOKENS=<n>` line —
+the sum of `usage.input_tokens`, `usage.cache_read_input_tokens`, and
+`usage.cache_creation_input_tokens` — on both pass and fail, which
+`lib/sub-issue-pipeline` strips before quoting the output into a comment
+(below). Exits 0 only on a "pass" verdict; a reported "fail", a session
+that errors out, or output that doesn't parse as a verdict all exit
+non-zero — every non-pass outcome is treated as "not confirmed". Retrying,
+escalating, and closing the sub-issue based on this verdict are
+`lib/sub-issue-pipeline`'s job (below), not this script's.
 
 ## `lib/sub-issue-pipeline`
 
@@ -152,7 +159,7 @@ non-zero.
 
 The implementing attempt streams directly to the terminal. The confirmation
 attempt's output is captured so it can be quoted into the closing or
-escalation comment, with any `COST_USD=<amount>` bookkeeping line stripped
+escalation comment, with any `CONTEXT_TOKENS=<n>` bookkeeping line stripped
 out first.
 
 ## `lib/worktree`

@@ -42,7 +42,7 @@ setup() {
 #!/usr/bin/env bash
 echo "cwd=$(pwd -P)" >&2
 echo "args=$*" >&2
-jq -n --arg args "$*" '{is_error: false, total_cost_usd: 0.1234, usage: {}, result: ("cwd=" + $args)}'
+jq -n --arg args "$*" '{is_error: false, total_cost_usd: 0.1234, usage: {input_tokens: 100, cache_read_input_tokens: 0, cache_creation_input_tokens: 0}, result: ("cwd=" + $args)}'
 EOF
   chmod +x "${FAKE_CLAUDE_DIR}/claude"
 
@@ -55,14 +55,14 @@ EOF
   [[ "$output" == *"do not create a new branch"* ]]
 }
 
-@test "run: prints the session's final result followed by a COST_USD line" {
+@test "run: prints the session's final result followed by a CONTEXT_TOKENS line" {
   local worktree_dir
   worktree_dir="$(mktemp -d)"
 
   FAKE_CLAUDE_DIR="$(mktemp -d)"
   cat >"${FAKE_CLAUDE_DIR}/claude" <<'EOF'
 #!/usr/bin/env bash
-jq -n '{is_error: false, total_cost_usd: 0.0852231, usage: {}, result: "implemented the frobnicator"}'
+jq -n '{is_error: false, total_cost_usd: 0.0852231, usage: {input_tokens: 1000, cache_read_input_tokens: 200, cache_creation_input_tokens: 50}, result: "implemented the frobnicator"}'
 EOF
   chmod +x "${FAKE_CLAUDE_DIR}/claude"
 
@@ -71,7 +71,7 @@ EOF
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"implemented the frobnicator"* ]]
-  [[ "$output" == *"COST_USD=0.0852231"* ]]
+  [[ "$output" == *"CONTEXT_TOKENS=1250"* ]]
 }
 
 @test "run: propagates claude's exit status" {

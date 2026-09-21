@@ -25,8 +25,9 @@ Subcommands:
       <worktree-dir>, with permission checks fully bypassed, prompting it
       to implement <issue-number> via the `implement` skill's
       slash-command form. Prints the session's final response followed by
-      a `COST_USD=<amount>` line (the session's dollar cost). Exits with
-      the invoked session's exit status.
+      a `CONTEXT_TOKENS=<n>` line (how full the session's context window
+      got on its final turn). Exits with the invoked session's exit
+      status.
 EOF
 }
 
@@ -70,10 +71,11 @@ cmd_run() {
   local prompt
   prompt="$(build_prompt "${issue}" "${title}")"
 
-  # --output-format json is requested solely so this attempt's dollar cost
-  # (total_cost_usd) can be reported via the COST_USD=<amount> line below --
-  # the session's exit status is still the only thing that matters beyond
-  # that; a non-JSON/error response short-circuits before any parsing.
+  # --output-format json is requested solely so this attempt's context
+  # consumption (the top-level usage object) can be reported via the
+  # CONTEXT_TOKENS=<n> line below -- the session's exit status is still the
+  # only thing that matters beyond that; a non-JSON/error response
+  # short-circuits before any parsing.
   local raw_output status=0
   raw_output="$(
     cd "${worktree_dir}"
@@ -85,13 +87,13 @@ cmd_run() {
     return "${status}"
   fi
 
-  local result cost
+  local result context_tokens
   result="$(jq -r '.result // empty' <<<"${raw_output}" 2>/dev/null)" || result=""
-  cost="$(jq -r '.total_cost_usd // 0' <<<"${raw_output}" 2>/dev/null)" || cost=""
-  cost="${cost:-0}"
+  context_tokens="$(jq -r '(.usage.input_tokens // 0) + (.usage.cache_read_input_tokens // 0) + (.usage.cache_creation_input_tokens // 0)' <<<"${raw_output}" 2>/dev/null)" || context_tokens=""
+  context_tokens="${context_tokens:-0}"
 
   [[ -n "${result}" ]] && echo "${result}"
-  echo "COST_USD=${cost}"
+  echo "CONTEXT_TOKENS=${context_tokens}"
 }
 
 main() {

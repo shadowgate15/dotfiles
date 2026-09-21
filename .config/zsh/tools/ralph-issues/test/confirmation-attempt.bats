@@ -50,15 +50,15 @@ setup() {
 
 fake_claude_reporting() {
   # $1: structured_output json body (e.g. '{"verdict":"pass","reason":"..."}')
-  # $2: total_cost_usd to report (default 0.05)
-  local structured="$1" cost="${2:-0.05}"
+  # $2: usage.input_tokens to report (default 2000)
+  local structured="$1" input_tokens="${2:-2000}"
   FAKE_CLAUDE_DIR="$(mktemp -d)"
   cat >"${FAKE_CLAUDE_DIR}/claude" <<EOF
 #!/usr/bin/env bash
 echo "cwd=\$(pwd -P)" >&2
 echo "args=\$*" >&2
-jq -n --argjson structured_output '${structured}' --arg cost '${cost}' \
-  '{is_error: false, total_cost_usd: (\$cost | tonumber), usage: {}, structured_output: \$structured_output, result: (\$structured_output | tojson)}'
+jq -n --argjson structured_output '${structured}' --arg input_tokens '${input_tokens}' \
+  '{is_error: false, total_cost_usd: 0.05, usage: {input_tokens: (\$input_tokens | tonumber), cache_read_input_tokens: 0, cache_creation_input_tokens: 0}, structured_output: \$structured_output, result: (\$structured_output | tojson)}'
 EOF
   chmod +x "${FAKE_CLAUDE_DIR}/claude"
 }
@@ -93,30 +93,30 @@ EOF
   [[ "$output" != *"Write"* ]]
 }
 
-@test "run: reports PASS, its cost, and exits 0 on a passing verdict" {
+@test "run: reports PASS, its context tokens, and exits 0 on a passing verdict" {
   local worktree_dir
   worktree_dir="$(mktemp -d)"
-  fake_claude_reporting '{"verdict":"pass","reason":"tests and typecheck green, no hard findings"}' 0.0852231
+  fake_claude_reporting '{"verdict":"pass","reason":"tests and typecheck green, no hard findings"}' 3000
 
   PATH="${FAKE_CLAUDE_DIR}:${PATH}" run "${CONFIRMATION_ATTEMPT}" run "${worktree_dir}" main 42 "Add the frobnicator"
   rm -rf "${FAKE_CLAUDE_DIR}" "${worktree_dir}"
 
   [ "$status" -eq 0 ]
   [[ "$output" == *"Confirmation: PASS -- tests and typecheck green, no hard findings"* ]]
-  [[ "$output" == *"COST_USD=0.0852231"* ]]
+  [[ "$output" == *"CONTEXT_TOKENS=3000"* ]]
 }
 
-@test "run: reports FAIL, its cost, and exits non-zero on a failing verdict" {
+@test "run: reports FAIL, its context tokens, and exits non-zero on a failing verdict" {
   local worktree_dir
   worktree_dir="$(mktemp -d)"
-  fake_claude_reporting '{"verdict":"fail","reason":"one test is failing"}' 0.02
+  fake_claude_reporting '{"verdict":"fail","reason":"one test is failing"}' 1500
 
   PATH="${FAKE_CLAUDE_DIR}:${PATH}" run "${CONFIRMATION_ATTEMPT}" run "${worktree_dir}" main 42 "Add the frobnicator"
   rm -rf "${FAKE_CLAUDE_DIR}" "${worktree_dir}"
 
   [ "$status" -ne 0 ]
   [[ "$output" == *"Confirmation: FAIL -- one test is failing"* ]]
-  [[ "$output" == *"COST_USD=0.02"* ]]
+  [[ "$output" == *"CONTEXT_TOKENS=1500"* ]]
 }
 
 @test "run: fails clearly when claude's output cannot be parsed as a verdict" {

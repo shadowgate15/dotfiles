@@ -24,9 +24,10 @@ Subcommands:
       <worktree-dir>, prompting it to run the repo's test/typecheck
       commands and the `code-review` skill against the diff between
       <base-ref> and HEAD. Prints the verdict and reason followed by a
-      `COST_USD=<amount>` line (the session's dollar cost), and exits 0 if
-      the verdict is "pass", non-zero otherwise (a reported "fail" verdict,
-      or a tooling/parse error -- both are "not confirmed").
+      `CONTEXT_TOKENS=<n>` line (how full the session's context window got
+      on its final turn), and exits 0 if the verdict is "pass", non-zero
+      otherwise (a reported "fail" verdict, or a tooling/parse error --
+      both are "not confirmed").
 EOF
 }
 
@@ -98,9 +99,10 @@ cmd_run() {
   local verdict_schema='{"type":"object","properties":{"verdict":{"type":"string","enum":["pass","fail"]},"reason":{"type":"string"}},"required":["verdict","reason"]}'
 
   # --output-format json (rather than "text") wraps the schema-constrained
-  # answer in the session's full result envelope, which is what exposes
-  # total_cost_usd -- needed to report this attempt's dollar cost via the
-  # COST_USD=<amount> line below.
+  # answer in the session's full result envelope, which is what exposes the
+  # top-level usage object -- needed to report this attempt's context
+  # consumption via the CONTEXT_TOKENS=<n> line below, alongside the verdict
+  # itself.
   local envelope
   envelope="$(
     cd "${worktree_dir}"
@@ -112,21 +114,21 @@ cmd_run() {
       "${prompt}"
   )" || runtime_fail "the confirmation session exited with an error; no verdict was produced."
 
-  local verdict reason cost
+  local verdict reason context_tokens
   verdict="$(jq -er '.structured_output.verdict' <<<"${envelope}" 2>/dev/null)" || runtime_fail "could not parse a verdict from the confirmation session's output: ${envelope}"
   reason="$(jq -r '.structured_output.reason // empty' <<<"${envelope}")"
-  cost="$(jq -r '.total_cost_usd // 0' <<<"${envelope}" 2>/dev/null)" || cost=""
-  cost="${cost:-0}"
+  context_tokens="$(jq -r '(.usage.input_tokens // 0) + (.usage.cache_read_input_tokens // 0) + (.usage.cache_creation_input_tokens // 0)' <<<"${envelope}" 2>/dev/null)" || context_tokens=""
+  context_tokens="${context_tokens:-0}"
 
   case "${verdict}" in
     pass)
       echo "Confirmation: PASS -- ${reason}"
-      echo "COST_USD=${cost}"
+      echo "CONTEXT_TOKENS=${context_tokens}"
       return 0
       ;;
     fail)
       echo "Confirmation: FAIL -- ${reason}"
-      echo "COST_USD=${cost}"
+      echo "CONTEXT_TOKENS=${context_tokens}"
       return 1
       ;;
     *)
