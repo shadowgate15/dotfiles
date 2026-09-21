@@ -57,7 +57,7 @@ Body text with no blockers.'
 set -euo pipefail
 case "$*" in
   "api repos/some-owner/some-repo/issues/11/sub_issues --jq"*)
-    echo '[{"number":5,"state":"closed","blocked_by":0,"assignees":[]},{"number":6,"state":"open","blocked_by":1,"assignees":[]},{"number":7,"state":"open","blocked_by":0,"assignees":[]}]'
+    echo '[{"number":5,"state":"closed","blocked_by":0,"assignees":[],"labels":[]},{"number":6,"state":"open","blocked_by":1,"assignees":[],"labels":["ready-for-agent"]},{"number":7,"state":"open","blocked_by":0,"assignees":[],"labels":[]}]'
     ;;
   *)
     echo "fake gh: unhandled invocation: $*" >&2
@@ -71,7 +71,7 @@ EOF
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [ "$output" = '{"shape":"native","sub_issues":[{"number":6,"blocked_by":1,"assignees":[]},{"number":7,"blocked_by":0,"assignees":[]}]}' ]
+  [ "$output" = '{"shape":"native","sub_issues":[{"number":6,"blocked_by":1,"assignees":[],"labels":["ready-for-agent"]},{"number":7,"blocked_by":0,"assignees":[],"labels":[]}]}' ]
 }
 
 # frontier-input: checklist fallback shape, gh mocked.
@@ -88,11 +88,11 @@ case "$*" in
   "issue view 11 --repo some-owner/some-repo --json body --jq"*)
     printf '%s\n' '- [ ] #13' '- [ ] #12'
     ;;
-  "issue view 13 --repo some-owner/some-repo --json body,state,assignees --jq"*)
-    echo '{"body":"Part of #11\nBlocked by: #12","state":"OPEN","assignees":[]}'
+  "issue view 13 --repo some-owner/some-repo --json body,state,assignees,labels --jq"*)
+    echo '{"body":"Part of #11\nBlocked by: #12","state":"OPEN","assignees":[],"labels":["ready-for-agent"]}'
     ;;
-  "issue view 12 --repo some-owner/some-repo --json body,state,assignees --jq"*)
-    echo '{"body":"Part of #11","state":"OPEN","assignees":[]}'
+  "issue view 12 --repo some-owner/some-repo --json body,state,assignees,labels --jq"*)
+    echo '{"body":"Part of #11","state":"OPEN","assignees":[],"labels":[]}'
     ;;
   *)
     echo "fake gh: unhandled invocation: $*" >&2
@@ -106,7 +106,7 @@ EOF
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [ "$output" = '{"shape":"checklist","checklist_order":[13,12],"issues":{"13":{"blocked_by":[12],"assignees":[]},"12":{"blocked_by":[],"assignees":[]}},"open_issues":[13,12]}' ]
+  [ "$output" = '{"shape":"checklist","checklist_order":[13,12],"issues":{"13":{"blocked_by":[12],"assignees":[],"labels":["ready-for-agent"]},"12":{"blocked_by":[],"assignees":[],"labels":[]}},"open_issues":[13,12]}' ]
 }
 
 @test "frontier-input: a closed checklist candidate is excluded from checklist_order" {
@@ -121,11 +121,11 @@ case "$*" in
   "issue view 11 --repo some-owner/some-repo --json body --jq"*)
     printf '%s\n' '- [ ] #13' '- [ ] #12'
     ;;
-  "issue view 13 --repo some-owner/some-repo --json body,state,assignees --jq"*)
-    echo '{"body":"Part of #11","state":"CLOSED","assignees":[]}'
+  "issue view 13 --repo some-owner/some-repo --json body,state,assignees,labels --jq"*)
+    echo '{"body":"Part of #11","state":"CLOSED","assignees":[],"labels":[]}'
     ;;
-  "issue view 12 --repo some-owner/some-repo --json body,state,assignees --jq"*)
-    echo '{"body":"Part of #11","state":"OPEN","assignees":[]}'
+  "issue view 12 --repo some-owner/some-repo --json body,state,assignees,labels --jq"*)
+    echo '{"body":"Part of #11","state":"OPEN","assignees":[],"labels":["ready-for-agent"]}'
     ;;
   *)
     echo "fake gh: unhandled invocation: $*" >&2
@@ -139,7 +139,7 @@ EOF
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [ "$output" = '{"shape":"checklist","checklist_order":[12],"issues":{"12":{"blocked_by":[],"assignees":[]}},"open_issues":[12]}' ]
+  [ "$output" = '{"shape":"checklist","checklist_order":[12],"issues":{"12":{"blocked_by":[],"assignees":[],"labels":["ready-for-agent"]}},"open_issues":[12]}' ]
 }
 
 @test "frontier-input: a checklist candidate missing the 'Part of #<parent>' marker is excluded" {
@@ -154,11 +154,11 @@ case "$*" in
   "issue view 11 --repo some-owner/some-repo --json body --jq"*)
     printf '%s\n' '- [ ] #99' '- [ ] #12'
     ;;
-  "issue view 99 --repo some-owner/some-repo --json body,state,assignees --jq"*)
-    echo '{"body":"Not part of this parent at all.","state":"OPEN","assignees":[]}'
+  "issue view 99 --repo some-owner/some-repo --json body,state,assignees,labels --jq"*)
+    echo '{"body":"Not part of this parent at all.","state":"OPEN","assignees":[],"labels":[]}'
     ;;
-  "issue view 12 --repo some-owner/some-repo --json body,state,assignees --jq"*)
-    echo '{"body":"Part of #11","state":"OPEN","assignees":[]}'
+  "issue view 12 --repo some-owner/some-repo --json body,state,assignees,labels --jq"*)
+    echo '{"body":"Part of #11","state":"OPEN","assignees":[],"labels":["ready-for-agent"]}'
     ;;
   *)
     echo "fake gh: unhandled invocation: $*" >&2
@@ -172,7 +172,7 @@ EOF
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [ "$output" = '{"shape":"checklist","checklist_order":[12],"issues":{"12":{"blocked_by":[],"assignees":[]}},"open_issues":[12]}' ]
+  [ "$output" = '{"shape":"checklist","checklist_order":[12],"issues":{"12":{"blocked_by":[],"assignees":[],"labels":["ready-for-agent"]}},"open_issues":[12]}' ]
 }
 
 # Remaining operations: assert the exact `gh` invocation each one shells out to.

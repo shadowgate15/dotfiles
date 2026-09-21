@@ -21,7 +21,8 @@ ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>] [-
 
 `--repo` defaults to the current checkout's repo, inferred from `git remote -v`.
 The tool loops: it recomputes the frontier, works the next ready sub-issue
-(the first one with no open blocker and no assignee) to completion, then
+(the first one with no open blocker, no assignee, and a `ready-for-agent`
+label) to completion, then
 recomputes the frontier again -- repeating until the frontier query returns
 no further ready sub-issue, or the whole-run ceiling is hit. Sub-issues are
 always processed strictly one at a time, in frontier order, never in
@@ -223,17 +224,19 @@ Claude Code calls — callers (the future orchestrator) are responsible for
 fetching tracker state and shaping it into one of two input shapes:
 
 - `"shape": "native"` — a `sub_issues` array in tracker-native order, each
-  with a `blocked_by` open-blocker count and an `assignees` array, for
-  parents using GitHub's native sub-issue/dependency data.
+  with a `blocked_by` open-blocker count, an `assignees` array, and a
+  `labels` array, for parents using GitHub's native sub-issue/dependency
+  data.
 - `"shape": "checklist"` — a `checklist_order` array of issue numbers, an
   `issues` map keyed by issue number (each with a `blocked_by` array of
-  blocker issue numbers and an `assignees` array), and an `open_issues`
-  array of currently-open issue numbers, for parents predating native
-  sub-issues that instead use a checklist body plus a `Part of #<parent>`
-  marker.
+  blocker issue numbers, an `assignees` array, and a `labels` array), and an
+  `open_issues` array of currently-open issue numbers, for parents predating
+  native sub-issues that instead use a checklist body plus a
+  `Part of #<parent>` marker.
 
 In both shapes the decision is the same: the first issue, in the given
-order, with no open blocker and no assignee; `null` if none qualify.
+order, with no open blocker, no assignee, and a `ready-for-agent` label;
+`null` if none qualify.
 
 ## Running tests
 

@@ -100,7 +100,7 @@ EOF
 @test "prints the next ready sub-issue's number and title, inferring the repo from git remote" {
   cd "${GIT_FIXTURE_DIR}"
   setup_fake_gh "some-owner/some-repo" 2 \
-    '[{"number":7,"state":"open","blocked_by":0,"assignees":[]}]' \
+    '[{"number":7,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' \
     7 "Do the thing"
 
   run "${RALPH_ISSUES_BIN}" 2
@@ -125,7 +125,7 @@ EOF
   cd "${GIT_FIXTURE_DIR}"
   git remote set-url origin "https://github.com/some-owner/some-repo.git"
   setup_fake_gh "some-owner/some-repo" 7 \
-    '[{"number":9,"state":"open","blocked_by":0,"assignees":[]}]' \
+    '[{"number":9,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' \
     9 "Another thing"
 
   run "${RALPH_ISSUES_BIN}" 7
@@ -139,7 +139,7 @@ EOF
 @test "accepts a --repo override instead of inferring from git remote" {
   cd "${GIT_FIXTURE_DIR}"
   setup_fake_gh "other-owner/other-repo" 2 \
-    '[{"number":3,"state":"open","blocked_by":0,"assignees":[]}]' \
+    '[{"number":3,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' \
     3 "Third thing"
 
   run "${RALPH_ISSUES_BIN}" 2 --repo other-owner/other-repo
@@ -153,7 +153,7 @@ EOF
 @test "accepts a --max-attempts override and threads it into the pipeline" {
   cd "${GIT_FIXTURE_DIR}"
   setup_fake_gh "some-owner/some-repo" 2 \
-    '[{"number":7,"state":"open","blocked_by":0,"assignees":[]}]' \
+    '[{"number":7,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' \
     7 "Do the thing"
 
   run "${RALPH_ISSUES_BIN}" 2 --max-attempts 1
@@ -182,9 +182,9 @@ phase="\$(cat "${phase_file}")"
 case "\$*" in
   "api repos/some-owner/some-repo/issues/2/sub_issues --jq"*)
     case "\${phase}" in
-      0) echo '[{"number":7,"state":"open","blocked_by":0,"assignees":[]},{"number":8,"state":"open","blocked_by":0,"assignees":[]}]' ;;
-      1) echo '[{"number":7,"state":"closed","blocked_by":0,"assignees":[]},{"number":8,"state":"open","blocked_by":0,"assignees":[]}]' ;;
-      *) echo '[{"number":7,"state":"closed","blocked_by":0,"assignees":[]},{"number":8,"state":"closed","blocked_by":0,"assignees":[]}]' ;;
+      0) echo '[{"number":7,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]},{"number":8,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' ;;
+      1) echo '[{"number":7,"state":"closed","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]},{"number":8,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' ;;
+      *) echo '[{"number":7,"state":"closed","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]},{"number":8,"state":"closed","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' ;;
     esac
     ;;
   "issue view 7 --repo some-owner/some-repo --json title --jq .title")

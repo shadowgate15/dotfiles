@@ -70,12 +70,12 @@ read_lines_into_array() {
 native_sub_issues() {
   local repo="$1" parent="$2"
   gh api "repos/${repo}/issues/${parent}/sub_issues" \
-    --jq '[.[] | {number, state, blocked_by: (.issue_dependencies_summary.blocked_by // 0), assignees: [.assignees[].login]}]'
+    --jq '[.[] | {number, state, blocked_by: (.issue_dependencies_summary.blocked_by // 0), assignees: [.assignees[].login], labels: [.labels[].name]}]'
 }
 
 build_native_frontier_input() {
   local sub_issues_raw="$1"
-  jq -c '{shape: "native", sub_issues: [.[] | select(.state == "open") | {number, blocked_by, assignees}]}' \
+  jq -c '{shape: "native", sub_issues: [.[] | select(.state == "open") | {number, blocked_by, assignees, labels}]}' \
     <<<"${sub_issues_raw}"
 }
 
@@ -111,14 +111,15 @@ build_checklist_frontier_input() {
   declare -A issue_state
   declare -A issue_assignees_json
   declare -A issue_blocked_by_json
+  declare -A issue_labels_json
   local -a all_referenced=()
 
   local n
   for n in "${candidates[@]}"; do
     [[ -n "${n}" ]] || continue
     local cinfo cbody
-    cinfo="$(gh issue view "${n}" --repo "${repo}" --json body,state,assignees \
-      --jq '{body, state, assignees: [.assignees[].login]}')"
+    cinfo="$(gh issue view "${n}" --repo "${repo}" --json body,state,assignees,labels \
+      --jq '{body, state, assignees: [.assignees[].login], labels: [.labels[].name]}')"
     cbody="$(jq -r '.body // ""' <<<"${cinfo}")"
 
     grep -qE "Part of #${parent}([^0-9]|\$)" <<<"${cbody}" || continue
@@ -130,6 +131,7 @@ build_checklist_frontier_input() {
     qualifying+=("${n}")
     issue_state["${n}"]="${state}"
     issue_assignees_json["${n}"]="$(jq -c '.assignees' <<<"${cinfo}")"
+    issue_labels_json["${n}"]="$(jq -c '.labels' <<<"${cinfo}")"
 
     local -a blockers=()
     read_lines_into_array blockers < <(blocked_by_numbers_from_body "${cbody}")
@@ -164,7 +166,8 @@ build_checklist_frontier_input() {
     entry="$(jq -n \
       --argjson blocked_by "${issue_blocked_by_json[${n}]:-[]}" \
       --argjson assignees "${issue_assignees_json[${n}]:-[]}" \
-      '{blocked_by: $blocked_by, assignees: $assignees}')"
+      --argjson labels "${issue_labels_json[${n}]:-[]}" \
+      '{blocked_by: $blocked_by, assignees: $assignees, labels: $labels}')"
     issues_json="$(jq --arg k "${n}" --argjson v "${entry}" '. + {($k): $v}' <<<"${issues_json}")"
   done
 
