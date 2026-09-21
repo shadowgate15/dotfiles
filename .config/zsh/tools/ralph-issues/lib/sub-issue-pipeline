@@ -7,9 +7,12 @@ set -euo pipefail
 # passing confirmation, this script -- never the implementing attempt
 # itself -- merges the sub-issue's branch into the run's shared integration
 # branch, discards the worktree, and posts a summary comment closing the
-# sub-issue via the adapter. On exhausting retries without a pass, the
-# sub-issue is labeled for human follow-up instead, and its worktree and
-# branch are left in place rather than discarded.
+# sub-issue via the adapter. On either terminal give-up path -- exhausting
+# retries without a pass, or a merge conflict against the integration
+# branch -- the sub-issue is released and parked for a human instead: a
+# comment is posted, `ready-for-agent` is swapped for `ready-for-human`, and
+# the issue is unassigned, with its worktree and branch left in place rather
+# than discarded.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMPLEMENT_ATTEMPT="${SCRIPT_DIR}/implement-attempt"
@@ -18,7 +21,8 @@ GITHUB_ADAPTER="${SCRIPT_DIR}/github-adapter"
 WORKTREE="${SCRIPT_DIR}/worktree"
 
 DEFAULT_MAX_ATTEMPTS=3
-ESCALATION_LABEL="needs-human"
+READY_FOR_AGENT_LABEL="ready-for-agent"
+ESCALATION_LABEL="ready-for-human"
 
 usage() {
   cat <<'EOF'
@@ -32,9 +36,10 @@ On a passing confirmation: merges the sub-issue's branch into
 <parent-issue>'s shared integration branch, discards <worktree-dir>, and
 closes the sub-issue via the adapter with a summary comment. Exits 0.
 
-On exhausting <max-attempts> without a pass: labels the sub-issue
-"needs-human" via the adapter and posts a comment summarizing the last
-verdict, leaving <worktree-dir> and its branch in place. Exits 1.
+On exhausting <max-attempts> without a pass, or on a merge conflict against
+the integration branch: posts a comment, removes the "ready-for-agent"
+label, adds the "ready-for-human" label, and unassigns the sub-issue via
+the adapter, leaving <worktree-dir> and its branch in place. Exits 1.
 EOF
 }
 
@@ -71,6 +76,12 @@ build_escalation_comment() {
     "${max_attempts}" "${confirmation_output}"
 }
 
+build_conflict_comment() {
+  local issue="$1" parent="$2"
+  printf 'ralph-issues automation confirmed #%s but hit a merge conflict integrating its branch into #%s'\''s integration branch. Its worktree and branch have been left in place for human follow-up.\n' \
+    "${issue}" "${parent}"
+}
+
 # Removes `CONTEXT_TOKENS=...` bookkeeping lines before attempt output is
 # quoted back into a human-facing GitHub comment.
 strip_context_tokens_line() {
@@ -85,6 +96,20 @@ merge_into_integration() {
   issue_branch="$("${WORKTREE}" branch-name "${issue}")"
 
   git -C "${integration_path}" merge --no-edit "${issue_branch}"
+}
+
+# Releases a sub-issue the bot has given up on -- posts a comment, swaps
+# `ready-for-agent` for `ready-for-human`, and unassigns it -- leaving its
+# worktree and branch in place for a human. Shared by both terminal give-up
+# paths: retry exhaustion and a merge conflict against the integration
+# branch.
+park_for_human() {
+  local repo="$1" issue="$2" comment="$3"
+
+  "${GITHUB_ADAPTER}" comment "${repo}" "${issue}" "${comment}" >/dev/null
+  "${GITHUB_ADAPTER}" unlabel "${repo}" "${issue}" "${READY_FOR_AGENT_LABEL}" >/dev/null
+  "${GITHUB_ADAPTER}" label "${repo}" "${issue}" "${ESCALATION_LABEL}" >/dev/null
+  "${GITHUB_ADAPTER}" unclaim "${repo}" "${issue}" >/dev/null
 }
 
 cmd_run() {
@@ -119,8 +144,12 @@ cmd_run() {
     confirmation_output="$(strip_context_tokens_line "${confirmation_output}")"
 
     if [[ ${confirm_status} -eq 0 ]]; then
-      merge_into_integration "${repo_root}" "${parent}" "${issue}" "${base_ref}" \
-        || runtime_fail "merging #${issue}'s branch into the integration branch failed -- worktree and branch left in place for manual resolution"
+      if ! merge_into_integration "${repo_root}" "${parent}" "${issue}" "${base_ref}"; then
+        local conflict_comment
+        conflict_comment="$(build_conflict_comment "${issue}" "${parent}")"
+        park_for_human "${repo}" "${issue}" "${conflict_comment}"
+        runtime_fail "merging #${issue}'s branch into the integration branch failed -- worktree and branch left in place for manual resolution"
+      fi
 
       "${WORKTREE}" discard "${repo_root}" "${issue}"
 
@@ -138,8 +167,7 @@ cmd_run() {
 
   local escalation_comment
   escalation_comment="$(build_escalation_comment "${issue}" "${max_attempts}" "${last_confirmation_output}")"
-  "${GITHUB_ADAPTER}" comment "${repo}" "${issue}" "${escalation_comment}" >/dev/null
-  "${GITHUB_ADAPTER}" label "${repo}" "${issue}" "${ESCALATION_LABEL}" >/dev/null
+  park_for_human "${repo}" "${issue}" "${escalation_comment}"
 
   echo "ralph-issues: #${issue} escalated for human follow-up after ${max_attempts} attempt(s); worktree and branch left in place."
   return 1

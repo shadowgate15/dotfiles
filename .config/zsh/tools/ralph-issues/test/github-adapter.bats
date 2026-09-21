@@ -260,13 +260,13 @@ echo "gh $*"
 EOF
   chmod +x "${FAKE_GH_DIR}/gh"
 
-  PATH="${FAKE_GH_DIR}:${PATH}" run "${GITHUB_ADAPTER}" label some-owner/some-repo 4 needs-human
+  PATH="${FAKE_GH_DIR}:${PATH}" run "${GITHUB_ADAPTER}" label some-owner/some-repo 4 ready-for-human
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
   [ "$output" = "$(printf '%s\n%s' \
-    "gh label create needs-human --repo some-owner/some-repo --force" \
-    "gh issue edit 4 --repo some-owner/some-repo --add-label needs-human")" ]
+    "gh label create ready-for-human --repo some-owner/some-repo --force" \
+    "gh issue edit 4 --repo some-owner/some-repo --add-label ready-for-human")" ]
 }
 
 @test "unlabel shells out to gh issue edit --remove-label" {
@@ -277,11 +277,11 @@ echo "gh $*"
 EOF
   chmod +x "${FAKE_GH_DIR}/gh"
 
-  PATH="${FAKE_GH_DIR}:${PATH}" run "${GITHUB_ADAPTER}" unlabel some-owner/some-repo 4 needs-human
+  PATH="${FAKE_GH_DIR}:${PATH}" run "${GITHUB_ADAPTER}" unlabel some-owner/some-repo 4 ready-for-human
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [ "$output" = "gh issue edit 4 --repo some-owner/some-repo --remove-label needs-human" ]
+  [ "$output" = "gh issue edit 4 --repo some-owner/some-repo --remove-label ready-for-human" ]
 }
 
 @test "rejects an unknown subcommand" {

@@ -148,15 +148,14 @@ On a passing confirmation: merges the sub-issue's branch into
 created via `lib/worktree`'s `create-integration` if it doesn't exist yet),
 discards the sub-issue's worktree (`lib/worktree discard`), and only then
 closes the sub-issue via the adapter with a summary comment — in that order,
-so a merge conflict is caught before anything is closed or discarded. If the
-merge itself fails (e.g. a genuine conflict against the integration branch),
-the sub-issue is left open, unclosed, and its worktree/branch untouched, for
-manual resolution.
+so a merge conflict is caught before anything is closed or discarded.
 
-On exhausting `<max-attempts>` without a pass: posts a comment summarizing
-the last verdict and labels the sub-issue `needs-human` via the adapter,
-leaving its worktree and branch in place rather than discarding them. Exits
-non-zero.
+Both terminal give-up paths — exhausting `<max-attempts>` without a pass, and
+a merge conflict against the integration branch — release the sub-issue and
+park it for a human the same way: post a comment, remove the
+`ready-for-agent` label, add `ready-for-human`, and unassign it via the
+adapter, leaving its worktree and branch in place rather than discarding
+them. Exits non-zero.
 
 The implementing attempt streams directly to the terminal. The confirmation
 attempt's output is captured so it can be quoted into the closing or
