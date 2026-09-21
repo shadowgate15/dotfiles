@@ -10,11 +10,10 @@ SUB_ISSUE_PIPELINE="${LIB_DIR}/sub-issue-pipeline"
 
 DEFAULT_MAX_ATTEMPTS=3
 DEFAULT_MAX_MINUTES=240
-DEFAULT_MAX_BUDGET_USD=20
 
 usage() {
   cat <<'EOF'
-Usage: ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>] [--max-minutes <n>] [--max-budget-usd <n>]
+Usage: ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>] [--max-minutes <n>]
 
 Arguments:
   <parent-issue-number>  The parent GitHub issue whose sub-issues will be worked.
@@ -26,9 +25,6 @@ Options:
                           inner loop. Default: 3.
   --max-minutes <n>      Whole-run wall-clock ceiling, in minutes. Checked
                           between sub-issues, never mid-attempt. Default: 240.
-  --max-budget-usd <n>   Whole-run dollar-cost ceiling, summed across every
-                          implement/confirm session. Checked between
-                          sub-issues, never mid-attempt. Default: 20.
   -h, --help             Show this help message.
 EOF
 }
@@ -56,25 +52,10 @@ is_nonnegative_integer() {
   [[ "$1" =~ ^(0|[1-9][0-9]*)$ ]]
 }
 
-is_positive_number() {
-  [[ "$1" =~ ^[0-9]+(\.[0-9]+)?$ ]] && awk -v n="$1" 'BEGIN { exit !(n > 0) }'
-}
-
-# True (exit 0) once <spent> has reached or passed <cap>, both dollar
-# amounts. Floating-point, so plain bash arithmetic can't do this compare.
-budget_ceiling_reached() {
-  local spent="$1" cap="$2"
-  awk -v s="${spent}" -v c="${cap}" 'BEGIN { exit !(s >= c) }'
-}
-
 # True (exit 0) once <elapsed_seconds> has reached or passed <max_minutes>.
 wall_clock_ceiling_reached() {
   local elapsed_seconds="$1" max_minutes="$2"
   (( elapsed_seconds >= max_minutes * 60 ))
-}
-
-sum_two_costs() {
-  awk -v a="$1" -v b="$2" 'BEGIN { printf "%.6f", a + b }'
 }
 
 # Prints every already-processed sub-issue's outcome, one per line, so an
@@ -115,7 +96,6 @@ main() {
   local repo_override=""
   local max_attempts="${DEFAULT_MAX_ATTEMPTS}"
   local max_minutes="${DEFAULT_MAX_MINUTES}"
-  local max_budget_usd="${DEFAULT_MAX_BUDGET_USD}"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -150,15 +130,6 @@ main() {
         max_minutes="${1#--max-minutes=}"
         shift
         ;;
-      --max-budget-usd)
-        [[ $# -ge 2 ]] || fail "--max-budget-usd requires a value"
-        max_budget_usd="$2"
-        shift 2
-        ;;
-      --max-budget-usd=*)
-        max_budget_usd="${1#--max-budget-usd=}"
-        shift
-        ;;
       -*)
         fail "unknown option '$1'"
         ;;
@@ -176,7 +147,6 @@ main() {
   [[ "${parent_issue}" =~ ^[1-9][0-9]*$ ]] || fail "invalid parent issue number '${parent_issue}' — must be a positive integer"
   is_positive_integer "${max_attempts}" || fail "invalid --max-attempts value '${max_attempts}' — must be a positive integer"
   is_nonnegative_integer "${max_minutes}" || fail "invalid --max-minutes value '${max_minutes}' — must be a non-negative integer"
-  is_positive_number "${max_budget_usd}" || fail "invalid --max-budget-usd value '${max_budget_usd}' — must be a positive number"
 
   local repo
   if [[ -n "${repo_override}" ]]; then
@@ -194,7 +164,6 @@ main() {
 
   local run_started
   run_started="$(date +%s)"
-  local total_cost="0"
   local -a processed=()
 
   while true; do
@@ -209,11 +178,6 @@ main() {
 
     if wall_clock_ceiling_reached "${elapsed}" "${max_minutes}"; then
       echo "ralph-issues: stopping -- whole-run wall-clock ceiling of ${max_minutes} minute(s) reached ($(( elapsed / 60 )) minute(s) elapsed)."
-      return 0
-    fi
-
-    if budget_ceiling_reached "${total_cost}" "${max_budget_usd}"; then
-      echo "ralph-issues: stopping -- whole-run budget ceiling of \$${max_budget_usd} reached (spent \$${total_cost})."
       return 0
     fi
 
@@ -240,23 +204,10 @@ main() {
 
     echo "Running implement/confirm pipeline for #${next_number} in ${worktree_dir}..."
 
-    # Piped through `tee` (rather than plain command substitution) so the
-    # sub-issue's pipeline output still streams live to the terminal, while
-    # also being captured here to pull out its `SUBISSUE_COST_USD=<amount>`
-    # line and its pass/escalate exit status for the run summary.
-    local pipeline_tmp pipeline_status=0
-    pipeline_tmp="$(mktemp)"
+    local pipeline_status=0
     "${SUB_ISSUE_PIPELINE}" run "${repo_root}" "${worktree_dir}" "${base_ref}" "${repo}" \
       "${parent_issue}" "${next_number}" "${next_title}" "${max_attempts}" \
-      2>&1 | tee "${pipeline_tmp}" || pipeline_status=$?
-    local pipeline_output
-    pipeline_output="$(cat "${pipeline_tmp}")"
-    rm -f "${pipeline_tmp}"
-
-    local sub_cost
-    sub_cost="$(grep -oE '^SUBISSUE_COST_USD=[0-9.eE+-]+' <<<"${pipeline_output}" | tail -n1 | cut -d= -f2)" || true
-    sub_cost="${sub_cost:-0}"
-    total_cost="$(sum_two_costs "${total_cost}" "${sub_cost}")"
+      || pipeline_status=$?
 
     if [[ ${pipeline_status} -eq 0 ]]; then
       processed+=("#${next_number} ${next_title} -- confirmed and closed")
@@ -276,7 +227,7 @@ main() {
     # the implement/confirm pipeline just took.
     local elapsed_now
     elapsed_now=$(( $(date +%s) - run_started ))
-    echo "ralph-issues: run so far -- ${#processed[@]} sub-issue(s) processed, \$${total_cost} spent, $(( elapsed_now / 60 )) minute(s) elapsed."
+    echo "ralph-issues: run so far -- ${#processed[@]} sub-issue(s) processed, $(( elapsed_now / 60 )) minute(s) elapsed."
   done
 }
 

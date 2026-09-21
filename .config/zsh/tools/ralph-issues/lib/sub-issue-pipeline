@@ -35,10 +35,6 @@ closes the sub-issue via the adapter with a summary comment. Exits 0.
 On exhausting <max-attempts> without a pass: labels the sub-issue
 "needs-human" via the adapter and posts a comment summarizing the last
 verdict, leaving <worktree-dir> and its branch in place. Exits 1.
-
-Either way, prints a final `SUBISSUE_COST_USD=<amount>` line -- the summed
-dollar cost of every implement/confirm attempt made for this sub-issue --
-for the orchestrator's whole-run budget ceiling.
 EOF
 }
 
@@ -75,25 +71,10 @@ build_escalation_comment() {
     "${max_attempts}" "${confirmation_output}"
 }
 
-# Pulls the last `COST_USD=<amount>` line out of an implement-attempt or
-# confirmation-attempt invocation's output, defaulting to 0 if none is
-# present (e.g. a session that errored out before reporting one).
-extract_cost() {
-  local text="$1"
-  local cost
-  cost="$(grep -oE '^COST_USD=[0-9.eE+-]+' <<<"${text}" | tail -n1 | cut -d= -f2)" || true
-  echo "${cost:-0}"
-}
-
-# Removes `COST_USD=...` bookkeeping lines before attempt output is quoted
-# back into a human-facing GitHub comment.
-strip_cost_line() {
-  grep -v '^COST_USD=' <<<"$1" || true
-}
-
-# Sums any number of dollar amounts (floating point) and prints the total.
-sum_costs() {
-  awk -v amounts="$*" 'BEGIN { n = split(amounts, a, " "); total = 0; for (i = 1; i <= n; i++) total += a[i]; printf "%.6f", total }'
+# Removes `CONTEXT_TOKENS=...` bookkeeping lines before attempt output is
+# quoted back into a human-facing GitHub comment.
+strip_context_tokens_line() {
+  grep -v '^CONTEXT_TOKENS=' <<<"$1" || true
 }
 
 merge_into_integration() {
@@ -122,21 +103,11 @@ cmd_run() {
 
   local attempt=1
   local last_confirmation_output=""
-  local total_cost="0"
 
   while (( attempt <= max_attempts )); do
     echo "ralph-issues: implement/confirm attempt ${attempt}/${max_attempts} for #${issue}..."
 
-    # Piped through `tee` (rather than plain command substitution) so each
-    # attempt's output still streams live to the terminal -- required for
-    # progress visibility during an unattended run -- while also being
-    # captured here to pull out its `COST_USD=<amount>` line.
-    local implement_tmp
-    implement_tmp="$(mktemp)"
-    "${IMPLEMENT_ATTEMPT}" run "${worktree_dir}" "${issue}" "${title}" 2>&1 | tee "${implement_tmp}" || true
-    local implement_cost
-    implement_cost="$(extract_cost "$(cat "${implement_tmp}")")"
-    rm -f "${implement_tmp}"
+    "${IMPLEMENT_ATTEMPT}" run "${worktree_dir}" "${issue}" "${title}" || true
 
     local confirm_tmp confirm_status=0
     confirm_tmp="$(mktemp)"
@@ -145,10 +116,7 @@ cmd_run() {
     confirmation_output="$(cat "${confirm_tmp}")"
     rm -f "${confirm_tmp}"
 
-    local confirm_cost
-    confirm_cost="$(extract_cost "${confirmation_output}")"
-    confirmation_output="$(strip_cost_line "${confirmation_output}")"
-    total_cost="$(sum_costs "${total_cost}" "${implement_cost}" "${confirm_cost}")"
+    confirmation_output="$(strip_context_tokens_line "${confirmation_output}")"
 
     if [[ ${confirm_status} -eq 0 ]]; then
       merge_into_integration "${repo_root}" "${parent}" "${issue}" "${base_ref}" \
@@ -161,7 +129,6 @@ cmd_run() {
       "${GITHUB_ADAPTER}" close "${repo}" "${issue}" "${comment}" >/dev/null
 
       echo "ralph-issues: #${issue} confirmed and closed, merged into $("${WORKTREE}" integration-branch-name "${parent}")."
-      echo "SUBISSUE_COST_USD=${total_cost}"
       return 0
     fi
 
@@ -175,7 +142,6 @@ cmd_run() {
   "${GITHUB_ADAPTER}" label "${repo}" "${issue}" "${ESCALATION_LABEL}" >/dev/null
 
   echo "ralph-issues: #${issue} escalated for human follow-up after ${max_attempts} attempt(s); worktree and branch left in place."
-  echo "SUBISSUE_COST_USD=${total_cost}"
   return 1
 }
 

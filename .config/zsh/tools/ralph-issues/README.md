@@ -9,20 +9,21 @@ slice (issue #4), per-sub-issue git worktree + claim (issue #5), the
 headless implement-attempt invocation (issue #6), the read-only
 confirmation pass (issue #7), the single sub-issue retry/verify-gated
 close/escalate pipeline (issue #8), and the outer loop over a parent issue's
-full run with whole-run ceilings and progress visibility (issue #9). The
-final single pull request covering a whole run doesn't exist yet.
+full run with a whole-run wall-clock ceiling and progress visibility
+(issue #9). The final single pull request covering a whole run doesn't
+exist yet.
 
 ## Usage
 
 ```sh
-ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>] [--max-minutes <n>] [--max-budget-usd <n>]
+ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>] [--max-minutes <n>]
 ```
 
 `--repo` defaults to the current checkout's repo, inferred from `git remote -v`.
 The tool loops: it recomputes the frontier, works the next ready sub-issue
 (the first one with no open blocker and no assignee) to completion, then
 recomputes the frontier again -- repeating until the frontier query returns
-no further ready sub-issue, or a whole-run ceiling is hit. Sub-issues are
+no further ready sub-issue, or the whole-run ceiling is hit. Sub-issues are
 always processed strictly one at a time, in frontier order, never in
 parallel. For each ready sub-issue, it creates a dedicated, disposable git
 worktree and branch scoped to that sub-issue (`lib/worktree`, below) and
@@ -39,19 +40,14 @@ sub-issue's worktree is branched from the run's integration branch (rather
 than the commit the run started at), so later sub-issues build on top of
 already-completed work instead of diverging from stale starting state.
 
-Before starting each sub-issue, two whole-run ceilings are checked --
+Before starting each sub-issue, a whole-run wall-clock ceiling is checked --
 between attempts only, never in the middle of one:
 
 - `--max-minutes <n>` (default 240) -- wall-clock time elapsed since the
   run started.
-- `--max-budget-usd <n>` (default 20) -- cumulative dollar cost across
-  every sub-issue processed so far in this run, summed from each
-  sub-issue's `SUBISSUE_COST_USD=<amount>` line (`lib/sub-issue-pipeline`,
-  below, which itself sums that sub-issue's own attempts' `COST_USD=<amount>`
-  lines from `lib/implement-attempt` and `lib/confirmation-attempt`).
 
-Either ceiling stops the run cleanly (the in-progress sub-issue, if any, has
-already finished) rather than mid-attempt. Both have safe built-in defaults
+The ceiling stops the run cleanly (the in-progress sub-issue, if any, has
+already finished) rather than mid-attempt. It has a safe built-in default
 so a first run with no flags still behaves safely.
 
 While running, the tool prints a `Processed so far:` list of every
@@ -82,10 +78,13 @@ implement-attempt run <worktree-dir> <issue-number> <issue-title>  # -> invokes 
 memory of any prior attempt beyond what's already committed or present in
 the worktree. Permission checks are fully bypassed so an unattended run
 never stalls waiting on an approval. `--output-format json` is requested
-solely to recover the session's dollar cost: on success, `run` prints the
-session's final response followed by a `COST_USD=<amount>` line (that
-session's `total_cost_usd`), for `lib/sub-issue-pipeline`'s whole-sub-issue
-cost total (below). Exits with the invoked session's exit status, though
+solely to expose the session's top-level `usage` object. On success, `run`
+prints the session's final response followed by a `CONTEXT_TOKENS=<n>` line
+— the sum of `usage.input_tokens`, `usage.cache_read_input_tokens`, and
+`usage.cache_creation_input_tokens`, an approximation of how full the
+context window got on the session's final turn — which `lib/sub-issue-pipeline`
+ignores. This is purely informational: never summed across attempts, never
+enforced. Exits with the invoked session's exit status, though
 `lib/sub-issue-pipeline` never treats that status as a verdict — retrying a
 failed attempt, verifying its result, and closing the sub-issue are its
 job, not this script's.
@@ -111,13 +110,15 @@ commands itself (no per-repo configuration), then invokes the `code-review`
 skill's Standards+Spec review against `git diff <base-ref>...HEAD`. Its
 final answer is constrained by `--json-schema` to
 `{"verdict": "pass"|"fail", "reason": "..."}`; `--output-format json` wraps
-that in the session's full result envelope, which is what exposes
-`total_cost_usd` alongside the schema-constrained `structured_output`. `run`
-parses that envelope and prints `Confirmation: PASS -- <reason>` or
-`Confirmation: FAIL -- <reason>` followed by a `COST_USD=<amount>` line (that
-session's `total_cost_usd`), for `lib/sub-issue-pipeline`'s whole-sub-issue
-cost total (below). Exits 0 only on a "pass" verdict; a reported "fail", a
-session that errors out, or output that doesn't parse as a verdict all exit
+that in the session's full result envelope, which is what exposes both the
+schema-constrained `structured_output` and the top-level `usage` object.
+`run` parses that envelope and prints `Confirmation: PASS -- <reason>` or
+`Confirmation: FAIL -- <reason>` followed by a `CONTEXT_TOKENS=<n>` line —
+the sum of `usage.input_tokens`, `usage.cache_read_input_tokens`, and
+`usage.cache_creation_input_tokens` — on both pass and fail, which
+`lib/sub-issue-pipeline` strips before quoting the output into a comment
+(below). Exits 0 only on a "pass" verdict; a reported "fail", a session
+that errors out, or output that doesn't parse as a verdict all exit
 non-zero — every non-pass outcome is treated as "not confirmed". Retrying,
 escalating, and closing the sub-issue based on this verdict are
 `lib/sub-issue-pipeline`'s job (below), not this script's.
@@ -156,10 +157,10 @@ the last verdict and labels the sub-issue `needs-human` via the adapter,
 leaving its worktree and branch in place rather than discarding them. Exits
 non-zero.
 
-Either way, `run` prints a final `SUBISSUE_COST_USD=<amount>` line — the
-sum of every implement/confirm attempt's `COST_USD=<amount>` for this
-sub-issue — which the `ralph-issues` outer loop (above) accumulates into
-its whole-run budget ceiling.
+The implementing attempt streams directly to the terminal. The confirmation
+attempt's output is captured so it can be quoted into the closing or
+escalation comment, with any `CONTEXT_TOKENS=<n>` bookkeeping line stripped
+out first.
 
 ## `lib/worktree`
 

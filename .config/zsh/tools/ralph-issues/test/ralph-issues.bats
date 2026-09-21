@@ -47,9 +47,9 @@ install_fake_claude() {
   cat >"$1/claude" <<'EOF'
 #!/usr/bin/env bash
 if [[ "$*" == *"--json-schema"* ]]; then
-  jq -n '{is_error: false, total_cost_usd: 0.05, structured_output: {verdict: "pass", reason: "fake confirmation pass"}, result: "{\"verdict\":\"pass\",\"reason\":\"fake confirmation pass\"}"}'
+  jq -n '{is_error: false, total_cost_usd: 0.05, usage: {}, structured_output: {verdict: "pass", reason: "fake confirmation pass"}, result: "{\"verdict\":\"pass\",\"reason\":\"fake confirmation pass\"}"}'
 else
-  jq -n --arg args "$*" '{is_error: false, total_cost_usd: 0.10, result: ("fake claude: " + $args)}'
+  jq -n --arg args "$*" '{is_error: false, total_cost_usd: 0.10, usage: {}, result: ("fake claude: " + $args)}'
 fi
 EOF
   chmod +x "$1/claude"
@@ -254,22 +254,6 @@ EOF
   [[ "$output" != *"Claimed #8"* ]]
 }
 
-@test "stops cleanly between sub-issues once the budget ceiling is reached" {
-  cd "${GIT_FIXTURE_DIR}"
-  setup_fake_gh_two_sub_issues
-
-  # Each sub-issue costs $0.15 (0.10 implement + 0.05 confirm); a $0.15 cap
-  # is reached only after #7 finishes, so #8 must never be claimed.
-  run "${RALPH_ISSUES_BIN}" 2 --max-budget-usd 0.15
-  rm -rf "${FAKE_GH_DIR}"
-
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Claimed #7"* ]]
-  [[ "$output" == *"#7 First thing -- confirmed and closed"* ]]
-  [[ "$output" == *"stopping -- whole-run budget ceiling of \$0.15 reached"* ]]
-  [[ "$output" != *"Claimed #8"* ]]
-}
-
 @test "rejects a non-numeric --max-minutes value" {
   cd "${GIT_FIXTURE_DIR}"
   run "${RALPH_ISSUES_BIN}" 2 --max-minutes not-a-number
@@ -290,12 +274,12 @@ EOF
   [[ "$output" == *"max-minutes"* ]]
 }
 
-@test "rejects a non-numeric --max-budget-usd value" {
+@test "rejects --max-budget-usd as an unknown option" {
   cd "${GIT_FIXTURE_DIR}"
-  run "${RALPH_ISSUES_BIN}" 2 --max-budget-usd not-a-number
+  run "${RALPH_ISSUES_BIN}" 2 --max-budget-usd 20
 
   [ "$status" -ne 0 ]
-  [[ "$output" == *"max-budget-usd"* ]]
+  [[ "$output" == *"unknown option"* ]]
 }
 
 @test "rejects a non-numeric --max-attempts value" {

@@ -42,26 +42,10 @@ teardown() {
   [[ "$output" == *"left in place for human follow-up"* ]]
 }
 
-@test "extract_cost: pulls the last COST_USD line out of attempt output, defaulting to 0" {
-  run bash -c 'source "$1"; extract_cost "$2"' _ "${PIPELINE}" "$(printf 'some text\nCOST_USD=0.1234\nmore text')"
-  [ "$status" -eq 0 ]
-  [ "$output" = "0.1234" ]
-
-  run bash -c 'source "$1"; extract_cost "$2"' _ "${PIPELINE}" "no cost line here"
-  [ "$status" -eq 0 ]
-  [ "$output" = "0" ]
-}
-
-@test "strip_cost_line: removes COST_USD lines, leaving the rest intact" {
-  run bash -c 'source "$1"; strip_cost_line "$2"' _ "${PIPELINE}" "$(printf 'Confirmation: PASS -- all good\nCOST_USD=0.05')"
+@test "strip_context_tokens_line: removes CONTEXT_TOKENS lines, leaving the rest intact" {
+  run bash -c 'source "$1"; strip_context_tokens_line "$2"' _ "${PIPELINE}" "$(printf 'Confirmation: PASS -- all good\nCONTEXT_TOKENS=1234')"
   [ "$status" -eq 0 ]
   [ "$output" = "Confirmation: PASS -- all good" ]
-}
-
-@test "sum_costs: adds dollar amounts together" {
-  run bash -c 'source "$1"; sum_costs "$2" "$3" "$4"' _ "${PIPELINE}" 0.1 0.02 0.003
-  [ "$status" -eq 0 ]
-  [ "$output" = "0.123000" ]
 }
 
 # Integration-shaped tests: real git worktrees/branches, faked `claude` and
@@ -85,12 +69,12 @@ if [[ "\$*" == *"--json-schema"* ]]; then
   echo "\${n}" >"${fakes_dir}/confirm-count.txt"
   structured="\$(sed -n "\${n}p" "${fakes_dir}/verdicts.txt")"
   jq -n --argjson structured_output "\${structured}" \
-    '{is_error: false, total_cost_usd: 0.05, structured_output: \$structured_output, result: (\$structured_output | tojson)}'
+    '{is_error: false, total_cost_usd: 0.05, usage: {}, structured_output: \$structured_output, result: (\$structured_output | tojson)}'
 else
   echo "implemented" >>file.txt
   git add -A
   git commit -q -m "implement attempt commit"
-  jq -n '{is_error: false, total_cost_usd: 0.10, result: "implemented"}'
+  jq -n '{is_error: false, total_cost_usd: 0.10, usage: {}, result: "implemented"}'
 fi
 EOF
   chmod +x "${fakes_dir}/claude"
@@ -126,7 +110,6 @@ EOF
   [[ "$output" == *"attempt 1/3"* ]]
   [[ "$output" == *"confirmed and closed"* ]]
   [[ "$output" == *"ralph-issues/parent-1-integration"* ]]
-  [[ "$output" == *"SUBISSUE_COST_USD=0.150000"* ]]
 
   # Worktree discarded, branch left alone.
   [ ! -d "${worktree_dir}" ]
@@ -162,7 +145,6 @@ EOF
   [[ "$output" == *"attempt 2/3"* ]]
   [[ "$output" == *"Confirmation: FAIL -- one test failing"* ]]
   [[ "$output" == *"confirmed and closed"* ]]
-  [[ "$output" == *"SUBISSUE_COST_USD=0.300000"* ]]
 
   # Two implement commits landed in the same, reused worktree branch.
   [ "$(git -C "${GIT_FIXTURE_DIR}" log --oneline "ralph-issues/issue-8" | grep -c "implement attempt commit")" -eq 2 ]
@@ -191,7 +173,6 @@ EOF
   [[ "$output" == *"attempt 2/3"* ]]
   [[ "$output" == *"attempt 3/3"* ]]
   [[ "$output" == *"escalated for human follow-up after 3 attempt(s)"* ]]
-  [[ "$output" == *"SUBISSUE_COST_USD=0.450000"* ]]
 
   # Worktree and branch both preserved.
   [ -d "${worktree_dir}" ]
@@ -231,11 +212,11 @@ if [[ "\$*" == *"--json-schema"* ]]; then
   echo "\${n}" >"${FAKES_DIR}/confirm-count.txt"
   structured="\$(sed -n "\${n}p" "${FAKES_DIR}/verdicts.txt")"
   jq -n --argjson structured_output "\${structured}" \
-    '{is_error: false, total_cost_usd: 0.05, structured_output: \$structured_output, result: (\$structured_output | tojson)}'
+    '{is_error: false, total_cost_usd: 0.05, usage: {}, structured_output: \$structured_output, result: (\$structured_output | tojson)}'
 else
   echo "sub-issue-side edit" >file.txt
   git commit -aqm "implement attempt commit"
-  jq -n '{is_error: false, total_cost_usd: 0.10, result: "implemented"}'
+  jq -n '{is_error: false, total_cost_usd: 0.10, usage: {}, result: "implemented"}'
 fi
 EOF
   chmod +x "${FAKES_DIR}/claude"
