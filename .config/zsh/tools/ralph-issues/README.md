@@ -202,9 +202,11 @@ same interface without touching orchestration logic.
 github-adapter frontier-input <owner/repo> <parent-issue>   # -> lib/frontier-query's input JSON
 github-adapter title <owner/repo> <issue>                   # -> issue title
 github-adapter claim <owner/repo> <issue>                    # assign to @me
+github-adapter unclaim <owner/repo> <issue>                  # remove @me's assignment
 github-adapter comment <owner/repo> <issue> <body>           # post a comment
 github-adapter close <owner/repo> <issue> [<closing-comment>]
-github-adapter label <owner/repo> <issue> <label>             # e.g. flag for human follow-up
+github-adapter label <owner/repo> <issue> <label>            # e.g. flag for human follow-up; creates the label if missing
+github-adapter unlabel <owner/repo> <issue> <label>          # remove a label (no-op if absent)
 ```
 
 `frontier-input` lists a parent's open sub-issues in tracker-native order and

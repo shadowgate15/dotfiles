@@ -24,6 +24,9 @@ Subcommands:
   claim <owner/repo> <issue>
       Assign an issue to the authenticated `gh` user.
 
+  unclaim <owner/repo> <issue>
+      Remove the authenticated `gh` user's assignment from an issue.
+
   comment <owner/repo> <issue> <body>
       Post a comment on an issue.
 
@@ -31,7 +34,11 @@ Subcommands:
       Close an issue, optionally posting a comment first.
 
   label <owner/repo> <issue> <label>
-      Add a label to an issue (e.g. to flag it for human follow-up).
+      Add a label to an issue (e.g. to flag it for human follow-up),
+      creating the label first if it doesn't already exist.
+
+  unlabel <owner/repo> <issue> <label>
+      Remove a label from an issue (a no-op if the label isn't set).
 EOF
 }
 
@@ -212,6 +219,14 @@ cmd_claim() {
   gh issue edit "${issue}" --repo "${repo}" --add-assignee @me
 }
 
+cmd_unclaim() {
+  local repo="${1:-}" issue="${2:-}"
+  [[ -n "${repo}" && -n "${issue}" ]] || fail "unclaim requires <owner/repo> <issue>"
+  is_owner_slash_repo "${repo}" || fail "invalid <owner/repo> value '${repo}'"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  gh issue edit "${issue}" --repo "${repo}" --remove-assignee @me
+}
+
 cmd_comment() {
   local repo="${1:-}" issue="${2:-}" body="${3:-}"
   [[ -n "${repo}" && -n "${issue}" && -n "${body}" ]] || fail "comment requires <owner/repo> <issue> <body>"
@@ -237,7 +252,16 @@ cmd_label() {
   [[ -n "${repo}" && -n "${issue}" && -n "${label}" ]] || fail "label requires <owner/repo> <issue> <label>"
   is_owner_slash_repo "${repo}" || fail "invalid <owner/repo> value '${repo}'"
   is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  gh label create "${label}" --repo "${repo}" --force
   gh issue edit "${issue}" --repo "${repo}" --add-label "${label}"
+}
+
+cmd_unlabel() {
+  local repo="${1:-}" issue="${2:-}" label="${3:-}"
+  [[ -n "${repo}" && -n "${issue}" && -n "${label}" ]] || fail "unlabel requires <owner/repo> <issue> <label>"
+  is_owner_slash_repo "${repo}" || fail "invalid <owner/repo> value '${repo}'"
+  is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
+  gh issue edit "${issue}" --repo "${repo}" --remove-label "${label}"
 }
 
 main() {
@@ -259,9 +283,11 @@ main() {
     frontier-input) cmd_frontier_input "$@" ;;
     title) cmd_title "$@" ;;
     claim) cmd_claim "$@" ;;
+    unclaim) cmd_unclaim "$@" ;;
     comment) cmd_comment "$@" ;;
     close) cmd_close "$@" ;;
     label) cmd_label "$@" ;;
+    unlabel) cmd_unlabel "$@" ;;
     *) fail "unknown subcommand '${sub}'" ;;
   esac
 }

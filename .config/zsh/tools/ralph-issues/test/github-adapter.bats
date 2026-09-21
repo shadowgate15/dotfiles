@@ -192,6 +192,21 @@ EOF
   [ "$output" = "gh issue edit 4 --repo some-owner/some-repo --add-assignee @me" ]
 }
 
+@test "unclaim shells out to gh issue edit --remove-assignee @me" {
+  FAKE_GH_DIR="$(mktemp -d)"
+  cat >"${FAKE_GH_DIR}/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "gh $*"
+EOF
+  chmod +x "${FAKE_GH_DIR}/gh"
+
+  PATH="${FAKE_GH_DIR}:${PATH}" run "${GITHUB_ADAPTER}" unclaim some-owner/some-repo 4
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "gh issue edit 4 --repo some-owner/some-repo --remove-assignee @me" ]
+}
+
 @test "comment shells out to gh issue comment --body" {
   FAKE_GH_DIR="$(mktemp -d)"
   cat >"${FAKE_GH_DIR}/gh" <<'EOF'
@@ -237,7 +252,7 @@ EOF
   [ "$output" = "gh issue close 4 --repo some-owner/some-repo --comment all done" ]
 }
 
-@test "label shells out to gh issue edit --add-label" {
+@test "label ensures the label exists then adds it" {
   FAKE_GH_DIR="$(mktemp -d)"
   cat >"${FAKE_GH_DIR}/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -249,7 +264,24 @@ EOF
   rm -rf "${FAKE_GH_DIR}"
 
   [ "$status" -eq 0 ]
-  [ "$output" = "gh issue edit 4 --repo some-owner/some-repo --add-label needs-human" ]
+  [ "$output" = "$(printf '%s\n%s' \
+    "gh label create needs-human --repo some-owner/some-repo --force" \
+    "gh issue edit 4 --repo some-owner/some-repo --add-label needs-human")" ]
+}
+
+@test "unlabel shells out to gh issue edit --remove-label" {
+  FAKE_GH_DIR="$(mktemp -d)"
+  cat >"${FAKE_GH_DIR}/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "gh $*"
+EOF
+  chmod +x "${FAKE_GH_DIR}/gh"
+
+  PATH="${FAKE_GH_DIR}:${PATH}" run "${GITHUB_ADAPTER}" unlabel some-owner/some-repo 4 needs-human
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "gh issue edit 4 --repo some-owner/some-repo --remove-label needs-human" ]
 }
 
 @test "rejects an unknown subcommand" {

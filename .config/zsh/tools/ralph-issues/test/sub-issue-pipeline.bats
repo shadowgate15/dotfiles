@@ -87,6 +87,7 @@ case "\$*" in
   "issue close "*"--comment"*) ;;
   "issue comment "*"--body"*) ;;
   "issue edit "*"--add-label"*) ;;
+  "label create "*) ;;
   *)
     echo "fake gh: unhandled invocation: \$*" >&2
     exit 1
