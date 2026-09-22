@@ -8,18 +8,43 @@ function (issue #3), the GitHub tracker adapter + "what's next" vertical
 slice (issue #4), per-sub-issue git worktree + claim (issue #5), the
 headless implement-attempt invocation (issue #6), the read-only
 confirmation pass (issue #7), the single sub-issue retry/verify-gated
-close/escalate pipeline (issue #8), and the outer loop over a parent issue's
+close/escalate pipeline (issue #8), the outer loop over a parent issue's
 full run with a whole-run wall-clock ceiling and progress visibility
-(issue #9). The final single pull request covering a whole run doesn't
-exist yet.
+(issue #9), the adapter selection seam (`--tracker` flag +
+`TRACKER_ADAPTER` override), the Forge tracker adapter (issue #30), and the
+end-to-end forge run wiring that skips GitHub remote inference and derives
+the on-screen scope from `forge project` under `--tracker forge` (issue
+#31). The final single pull request covering a whole run doesn't exist yet.
 
 ## Usage
 
 ```sh
-ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>] [--max-minutes <n>]
+ralph-issues <parent-issue-number> [--repo <owner/repo>] [--tracker <github|forge>] [--max-attempts <n>] [--max-minutes <n>]
 ```
 
 `--repo` defaults to the current checkout's repo, inferred from `git remote -v`.
+
+`--tracker <name>` (default `github`) selects which tracker adapter the run
+uses. Both `bin/ralph-issues` and `lib/sub-issue-pipeline` resolve the
+adapter to invoke through a single `TRACKER_ADAPTER` variable, overridable
+like `SUB_ISSUE_PIPELINE` below, defaulting to `lib/<tracker>-adapter`.
+`bin/ralph-issues` exports it so the pipeline it spawns resolves the same
+adapter rather than re-deriving it from a `--tracker` flag it never sees.
+`--tracker forge` resolves to `lib/forge-adapter` (below); an adapter
+missing from `lib/` for any other tracker name fails fast with a clear
+error rather than a generic "command not found".
+
+Under `--tracker forge`, `bin/ralph-issues` skips `infer_repo_from_git_remote`
+entirely — a forge run in a repo with no `origin` git remote succeeds
+instead of failing — and instead runs `forge project` for the on-screen
+scope shown in `Now working:` / `No ready sub-issue for parent ...` lines.
+This requires a `forge` CLI version providing `forge project`, which prints
+the derived project name on one line to stdout (exit 0), falling back to
+the current directory's basename outside a git repo. That value is passed
+through as the adapter's scope-token argument, though `lib/forge-adapter`
+ignores it (forge derives its own project scope internally). `--tracker
+github` (or no `--tracker` flag) is unaffected and continues to infer the
+GitHub repo exactly as before.
 The tool loops: it recomputes the frontier, works the next ready sub-issue
 (the first one with no open blocker, no assignee, and a `ready-for-agent`
 label) to completion, then
@@ -227,6 +252,42 @@ has any populated; otherwise it reconstructs the same shape from the parent
 body's checklist plus each candidate's `Part of #<parent>` marker (and a
 `Blocked by: #<n>, #<n>` line for dependency edges), per this repo's
 `docs/agents/issue-tracker.md` wayfinder convention.
+
+## `lib/forge-adapter`
+
+The sole place `forge` is invoked from ralph-issues, exposing the identical
+8-subcommand interface `lib/github-adapter` does, mapped onto
+`forge task ...` instead of `gh`. Selected via `--tracker forge`.
+
+```sh
+forge-adapter frontier-input <scope> <parent>   # -> lib/frontier-query's input JSON
+forge-adapter title <scope> <id>                # -> task title
+forge-adapter claim <scope> <id>                 # claim for the current user
+forge-adapter unclaim <scope> <id>               # release the assignee
+forge-adapter comment <scope> <id> <body>        # post a comment
+forge-adapter close <scope> <id> [<closing-comment>]
+forge-adapter label <scope> <id> <label>         # creates the label if missing
+forge-adapter unlabel <scope> <id> <label>       # remove a label (no-op if absent)
+```
+
+`<scope>` is accepted for interface parity with `github-adapter` but
+ignored — `forge` derives its own project scope from the current checkout,
+so there's no `owner/repo`-equivalent value to pass through.
+
+`frontier-input` issues a single `forge task list --parent <parent>
+--json=id,title,status,labels,assignee,blocked_by` and always emits the
+native shape — Forge always has task-native parent/child and
+blocked-by data, so there's no checklist fallback to reconstruct. Each open
+child's `blocked_by` array (which lists every blocker regardless of state)
+is collapsed to an open-blocker count, and its `assignee` scalar
+(`null` or a single name) is normalized to the `assignees` array
+`lib/frontier-query` expects.
+
+`claim` maps to `forge task claim <id>` with no `--force`, so it never
+steals an assignment from someone else. `close` runs `forge task comment`
+(when a closing comment is given) before `forge task update --status
+closed`, in that order — the same "comment, then close" sequencing
+`github-adapter` uses.
 
 ## `lib/frontier-query`
 

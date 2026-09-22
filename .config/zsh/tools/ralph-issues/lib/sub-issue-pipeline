@@ -17,7 +17,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMPLEMENT_ATTEMPT="${SCRIPT_DIR}/implement-attempt"
 CONFIRMATION_ATTEMPT="${SCRIPT_DIR}/confirmation-attempt"
-GITHUB_ADAPTER="${SCRIPT_DIR}/github-adapter"
+# Overridable so bin/ralph-issues (which resolves the same variable for its
+# own adapter calls) can pass down whichever tracker `--tracker` selected,
+# rather than this pipeline independently hardcoding the GitHub adapter.
+TRACKER_ADAPTER="${TRACKER_ADAPTER:-${SCRIPT_DIR}/github-adapter}"
 WORKTREE="${SCRIPT_DIR}/worktree"
 
 DEFAULT_MAX_ATTEMPTS=3
@@ -58,10 +61,6 @@ runtime_fail() {
 
 is_issue_number() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
-}
-
-is_owner_slash_repo() {
-  [[ "$1" =~ ^[^/]+/[^/]+$ ]]
 }
 
 build_close_comment() {
@@ -106,10 +105,10 @@ merge_into_integration() {
 park_for_human() {
   local repo="$1" issue="$2" comment="$3"
 
-  "${GITHUB_ADAPTER}" comment "${repo}" "${issue}" "${comment}" >/dev/null
-  "${GITHUB_ADAPTER}" unlabel "${repo}" "${issue}" "${READY_FOR_AGENT_LABEL}" >/dev/null
-  "${GITHUB_ADAPTER}" label "${repo}" "${issue}" "${ESCALATION_LABEL}" >/dev/null
-  "${GITHUB_ADAPTER}" unclaim "${repo}" "${issue}" >/dev/null
+  "${TRACKER_ADAPTER}" comment "${repo}" "${issue}" "${comment}" >/dev/null
+  "${TRACKER_ADAPTER}" unlabel "${repo}" "${issue}" "${READY_FOR_AGENT_LABEL}" >/dev/null
+  "${TRACKER_ADAPTER}" label "${repo}" "${issue}" "${ESCALATION_LABEL}" >/dev/null
+  "${TRACKER_ADAPTER}" unclaim "${repo}" "${issue}" >/dev/null
 }
 
 cmd_run() {
@@ -121,7 +120,6 @@ cmd_run() {
     || fail "run requires <repo-root> <worktree-dir> <base-ref> <repo> <parent-issue> <issue-number> <issue-title> [<max-attempts>]"
   [[ -d "${repo_root}" ]] || fail "repo root '${repo_root}' does not exist"
   [[ -d "${worktree_dir}" ]] || fail "worktree directory '${worktree_dir}' does not exist"
-  is_owner_slash_repo "${repo}" || fail "invalid <owner/repo> value '${repo}'"
   is_issue_number "${parent}" || fail "invalid parent issue number '${parent}'"
   is_issue_number "${issue}" || fail "invalid issue number '${issue}'"
   is_issue_number "${max_attempts}" || fail "invalid max-attempts value '${max_attempts}' -- must be a positive integer"
@@ -155,7 +153,7 @@ cmd_run() {
 
       local comment
       comment="$(build_close_comment "${attempt}" "${max_attempts}" "${confirmation_output}")"
-      "${GITHUB_ADAPTER}" close "${repo}" "${issue}" "${comment}" >/dev/null
+      "${TRACKER_ADAPTER}" close "${repo}" "${issue}" "${comment}" >/dev/null
 
       echo "ralph-issues: #${issue} confirmed and closed, merged into $("${WORKTREE}" integration-branch-name "${parent}")."
       return 0

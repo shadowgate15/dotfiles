@@ -263,6 +263,40 @@ EOF
   [[ "$output" == *"worktree directory"* ]]
 }
 
+@test "run: resolves its adapter through TRACKER_ADAPTER instead of a hardcoded github-adapter" {
+  local worktree_dir
+  worktree_dir="$("${WORKTREE}" create "${GIT_FIXTURE_DIR}" 13 "${BASE_REF}")"
+
+  FAKES_DIR="$(mktemp -d)"
+  setup_fakes "${FAKES_DIR}" '{"verdict":"pass","reason":"tests and typecheck green"}'
+
+  local stub_adapter="${FAKES_DIR}/stub-adapter"
+  : >"${FAKES_DIR}/stub-adapter.log"
+  cat >"${stub_adapter}" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+echo "\$*" >>"${FAKES_DIR}/stub-adapter.log"
+case "\$1" in
+  close) ;;
+  *)
+    echo "stub-adapter: unhandled invocation: \$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+  chmod +x "${stub_adapter}"
+
+  TRACKER_ADAPTER="${stub_adapter}" PATH="${FAKES_DIR}:${PATH}" run "${PIPELINE}" run "${GIT_FIXTURE_DIR}" "${worktree_dir}" "${BASE_REF}" \
+    some-owner/some-repo 1 13 "Add the frobnicator" 3
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"confirmed and closed"* ]]
+  grep -q "^close some-owner/some-repo 13" "${FAKES_DIR}/stub-adapter.log"
+  [ ! -s "${FAKES_DIR}/gh.log" ]
+
+  rm -rf "${FAKES_DIR}"
+}
+
 @test "rejects an unknown subcommand" {
   run "${PIPELINE}" bogus "${GIT_FIXTURE_DIR}" /tmp some-owner/some-repo 1 12 "Some title"
 

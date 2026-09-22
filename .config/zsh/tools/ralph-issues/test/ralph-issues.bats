@@ -355,6 +355,125 @@ EOF
   [ "$output" = "No ready sub-issue for parent #2 in some-owner/some-repo (all sub-issues are blocked, assigned, or none exist)." ]
 }
 
+@test "rejects an unknown --tracker value" {
+  cd "${GIT_FIXTURE_DIR}"
+  run "${RALPH_ISSUES_BIN}" 2 --tracker bogus
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"--tracker"* ]]
+}
+
+@test "--tracker forge resolves the forge adapter" {
+  cd "${GIT_FIXTURE_DIR}"
+  FAKE_FORGE_DIR="$(mktemp -d)"
+  local state_file="${FAKE_FORGE_DIR}/state"
+  echo "open" >"${state_file}"
+  cat >"${FAKE_FORGE_DIR}/forge" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+case "\$*" in
+  "task list --parent 2 --json=id,title,status,labels,assignee,blocked_by")
+    if [[ "\$(cat "${state_file}")" == "closed" ]]; then
+      echo '[{"id":7,"title":"Do the thing","status":"closed","labels":[],"assignee":null,"blocked_by":[]}]'
+    else
+      echo '[{"id":7,"title":"Do the thing","status":"open","labels":["ready-for-agent"],"assignee":null,"blocked_by":[]}]'
+    fi
+    ;;
+  "task view 7 --json=title")
+    echo '{"title":"Do the thing"}'
+    ;;
+  "task claim 7") ;;
+  "task unlabel 7 ready-for-agent") ;;
+  "task unlabel 7 ready-for-human") ;;
+  "task comment 7"*) ;;
+  "task update 7 --status closed")
+    echo "closed" >"${state_file}"
+    ;;
+  "project")
+    echo "some-forge-project"
+    ;;
+  *)
+    echo "fake forge: unhandled invocation: \$*" >&2
+    exit 1
+    ;;
+esac
+EOF
+  chmod +x "${FAKE_FORGE_DIR}/forge"
+  install_fake_claude "${FAKE_FORGE_DIR}"
+  PATH="${FAKE_FORGE_DIR}:${PATH}"
+
+  run "${RALPH_ISSUES_BIN}" 2 --tracker forge
+  rm -rf "${FAKE_FORGE_DIR}"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Now working: #7 Do the thing"* ]]
+  [[ "$output" == *"confirmed and closed"* ]]
+  [[ "$output" == *"some-forge-project"* ]]
+}
+
+@test "--tracker forge does not require an origin git remote and shows the forge project as scope" {
+  local bare_dir
+  bare_dir="$(mktemp -d)"
+  git -C "${bare_dir}" init -q
+  git -C "${bare_dir}" config user.email "test@example.com"
+  git -C "${bare_dir}" config user.name "Test"
+  git -C "${bare_dir}" commit -q --allow-empty -m "initial commit"
+  cd "${bare_dir}"
+
+  FAKE_FORGE_DIR="$(mktemp -d)"
+  cat >"${FAKE_FORGE_DIR}/forge" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "task list --parent 2 --json=id,title,status,labels,assignee,blocked_by")
+    echo '[]'
+    ;;
+  "project")
+    echo "no-remote-project"
+    ;;
+  *)
+    echo "fake forge: unhandled invocation: $*" >&2
+    exit 1
+    ;;
+esac
+EOF
+  chmod +x "${FAKE_FORGE_DIR}/forge"
+  install_fake_claude "${FAKE_FORGE_DIR}"
+  PATH="${FAKE_FORGE_DIR}:${PATH}"
+
+  run "${RALPH_ISSUES_BIN}" 2 --tracker forge
+  rm -rf "${FAKE_FORGE_DIR}" "${bare_dir}" "${bare_dir}.ralph-worktrees"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No ready sub-issue for parent #2 in no-remote-project"* ]]
+}
+
+@test "no --tracker flag resolves the github adapter" {
+  cd "${GIT_FIXTURE_DIR}"
+  setup_fake_gh "some-owner/some-repo" 2 \
+    '[{"number":7,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' \
+    7 "Do the thing"
+
+  run "${RALPH_ISSUES_BIN}" 2
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"confirmed and closed"* ]]
+}
+
+@test "--tracker github resolves the github adapter explicitly" {
+  cd "${GIT_FIXTURE_DIR}"
+  setup_fake_gh "some-owner/some-repo" 2 \
+    '[{"number":7,"state":"open","blocked_by":0,"assignees":[],"labels":["ready-for-agent"]}]' \
+    7 "Do the thing"
+
+  run "${RALPH_ISSUES_BIN}" 2 --tracker github
+  rm -rf "${FAKE_GH_DIR}"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"confirmed and closed"* ]]
+}
+
 @test "rejects a malformed --repo override" {
   cd "${GIT_FIXTURE_DIR}"
   run "${RALPH_ISSUES_BIN}" 2 --repo not-a-valid-repo

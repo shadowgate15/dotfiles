@@ -3,7 +3,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="${SCRIPT_DIR}/../lib"
-GITHUB_ADAPTER="${LIB_DIR}/github-adapter"
 FRONTIER_QUERY="${LIB_DIR}/frontier-query"
 WORKTREE="${LIB_DIR}/worktree"
 # Overridable so bats can substitute a stub (e.g. one that crashes before
@@ -13,12 +12,13 @@ SUB_ISSUE_PIPELINE="${SUB_ISSUE_PIPELINE:-${LIB_DIR}/sub-issue-pipeline}"
 
 DEFAULT_MAX_ATTEMPTS=3
 DEFAULT_MAX_MINUTES=240
+DEFAULT_TRACKER="github"
 READY_FOR_AGENT_LABEL="ready-for-agent"
 ESCALATION_LABEL="ready-for-human"
 
 usage() {
   cat <<'EOF'
-Usage: ralph-issues <parent-issue-number> [--repo <owner/repo>] [--max-attempts <n>] [--max-minutes <n>]
+Usage: ralph-issues <parent-issue-number> [--repo <owner/repo>] [--tracker <github|forge>] [--max-attempts <n>] [--max-minutes <n>]
 
 Arguments:
   <parent-issue-number>  The parent GitHub issue whose sub-issues will be worked.
@@ -26,6 +26,8 @@ Arguments:
 Options:
   --repo <owner/repo>    Target repo to operate on. Defaults to the current
                           checkout's repo, inferred from `git remote -v`.
+  --tracker <name>       Issue tracker adapter to use: "github" or "forge".
+                          Default: github.
   --max-attempts <n>     Retry ceiling for a sub-issue's implement/confirm
                           inner loop. Default: 3.
   --max-minutes <n>      Whole-run wall-clock ceiling, in minutes. Checked
@@ -46,6 +48,10 @@ is_owner_slash_repo() {
 
 is_positive_integer() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+is_supported_tracker() {
+  [[ "$1" == "github" || "$1" == "forge" ]]
 }
 
 # Unlike --max-attempts (a retry count, where zero is meaningless), zero is
@@ -96,9 +102,26 @@ infer_repo_from_git_remote() {
   echo "${repo}"
 }
 
+# Under --tracker forge there is no owner/repo to infer -- forge derives its
+# own project scope from the git remote (falling back to the current
+# directory's basename outside a git repo). This is the one call to `forge`
+# itself made outside lib/forge-adapter, since it's purely for the on-screen
+# scope label rather than a tracker operation the adapter interface covers.
+resolve_forge_scope() {
+  command -v forge >/dev/null 2>&1 || {
+    echo "Error: the \`forge\` CLI is required but was not found on PATH." >&2
+    exit 1
+  }
+  forge project || {
+    echo "Error: \`forge project\` failed to resolve the current project scope." >&2
+    exit 1
+  }
+}
+
 main() {
   local parent_issue=""
   local repo_override=""
+  local tracker="${DEFAULT_TRACKER}"
   local max_attempts="${DEFAULT_MAX_ATTEMPTS}"
   local max_minutes="${DEFAULT_MAX_MINUTES}"
 
@@ -115,6 +138,15 @@ main() {
         ;;
       --repo=*)
         repo_override="${1#--repo=}"
+        shift
+        ;;
+      --tracker)
+        [[ $# -ge 2 ]] || fail "--tracker requires a value"
+        tracker="$2"
+        shift 2
+        ;;
+      --tracker=*)
+        tracker="${1#--tracker=}"
         shift
         ;;
       --max-attempts)
@@ -152,11 +184,25 @@ main() {
   [[ "${parent_issue}" =~ ^[1-9][0-9]*$ ]] || fail "invalid parent issue number '${parent_issue}' — must be a positive integer"
   is_positive_integer "${max_attempts}" || fail "invalid --max-attempts value '${max_attempts}' — must be a positive integer"
   is_nonnegative_integer "${max_minutes}" || fail "invalid --max-minutes value '${max_minutes}' — must be a non-negative integer"
+  is_supported_tracker "${tracker}" || fail "invalid --tracker value '${tracker}' — must be one of: github, forge"
+
+  # Overridable so bats can substitute a stub adapter, and so `--tracker
+  # forge` resolves to `lib/forge-adapter` instead of rewriting
+  # orchestration code. Exported so the SUB_ISSUE_PIPELINE subprocess below
+  # resolves the very same adapter rather than re-deriving it from a
+  # --tracker flag it never sees.
+  local TRACKER_ADAPTER="${TRACKER_ADAPTER:-${LIB_DIR}/${tracker}-adapter}"
+  [[ -x "${TRACKER_ADAPTER}" ]] || fail "no adapter found for --tracker '${tracker}' (expected an executable at '${TRACKER_ADAPTER}')"
+  export TRACKER_ADAPTER
 
   local repo
   if [[ -n "${repo_override}" ]]; then
     is_owner_slash_repo "${repo_override}" || fail "invalid --repo value '${repo_override}' — expected <owner/repo>"
     repo="${repo_override}"
+  elif [[ "${tracker}" == "forge" ]]; then
+    # Forge derives its own project scope; skip GitHub remote inference
+    # entirely so a forge run works in a repo with no `origin` remote.
+    repo="$(resolve_forge_scope)"
   else
     repo="$(infer_repo_from_git_remote)"
   fi
@@ -187,7 +233,7 @@ main() {
     fi
 
     local decision next_number
-    decision="$("${GITHUB_ADAPTER}" frontier-input "${repo}" "${parent_issue}" | "${FRONTIER_QUERY}")"
+    decision="$("${TRACKER_ADAPTER}" frontier-input "${repo}" "${parent_issue}" | "${FRONTIER_QUERY}")"
     next_number="$(jq -r '.next // empty' <<<"${decision}")"
 
     if [[ -z "${next_number}" ]]; then
@@ -196,7 +242,7 @@ main() {
     fi
 
     local next_title
-    next_title="$("${GITHUB_ADAPTER}" title "${repo}" "${next_number}")"
+    next_title="$("${TRACKER_ADAPTER}" title "${repo}" "${next_number}")"
     echo "Now working: #${next_number} ${next_title}"
 
     local worktree_dir worktree_branch
@@ -204,15 +250,15 @@ main() {
     worktree_branch="$("${WORKTREE}" branch-name "${next_number}")"
     echo "Worktree: ${worktree_dir} (branch ${worktree_branch})"
 
-    "${GITHUB_ADAPTER}" claim "${repo}" "${next_number}" >/dev/null
+    "${TRACKER_ADAPTER}" claim "${repo}" "${next_number}" >/dev/null
 
     # Defensively strip both poles right after assigning, so a sub-issue
     # never sits claimed alongside a stale ready-for-agent or ready-for-human
     # label left over from a previous run -- regardless of pipeline outcome,
     # exactly one of those two labels (if either) is meaningful once this
     # sub-issue is actually done, and that's decided below, not here.
-    "${GITHUB_ADAPTER}" unlabel "${repo}" "${next_number}" "${READY_FOR_AGENT_LABEL}" >/dev/null
-    "${GITHUB_ADAPTER}" unlabel "${repo}" "${next_number}" "${ESCALATION_LABEL}" >/dev/null
+    "${TRACKER_ADAPTER}" unlabel "${repo}" "${next_number}" "${READY_FOR_AGENT_LABEL}" >/dev/null
+    "${TRACKER_ADAPTER}" unlabel "${repo}" "${next_number}" "${ESCALATION_LABEL}" >/dev/null
     echo "Claimed #${next_number}"
 
     echo "Running implement/confirm pipeline for #${next_number} in ${worktree_dir}..."
@@ -234,9 +280,9 @@ main() {
       # `close` call -- parking an already-merged issue for human review
       # rather than leaving it silently claimed is the intentional,
       # conservative side to fail on.
-      "${GITHUB_ADAPTER}" unclaim "${repo}" "${next_number}" >/dev/null
-      "${GITHUB_ADAPTER}" unlabel "${repo}" "${next_number}" "${READY_FOR_AGENT_LABEL}" >/dev/null
-      "${GITHUB_ADAPTER}" label "${repo}" "${next_number}" "${ESCALATION_LABEL}" >/dev/null
+      "${TRACKER_ADAPTER}" unclaim "${repo}" "${next_number}" >/dev/null
+      "${TRACKER_ADAPTER}" unlabel "${repo}" "${next_number}" "${READY_FOR_AGENT_LABEL}" >/dev/null
+      "${TRACKER_ADAPTER}" label "${repo}" "${next_number}" "${ESCALATION_LABEL}" >/dev/null
     fi
 
     if [[ ${pipeline_status} -eq 0 ]]; then

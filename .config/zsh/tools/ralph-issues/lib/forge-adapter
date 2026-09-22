@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Forge tracker adapter: the sole place `forge` is invoked from ralph-issues.
+# Exposes the identical 8-subcommand interface github-adapter does, mapped
+# onto `forge task ...`. See ../README.md for the subcommand interface this
+# exposes to orchestration code.
+
+usage() {
+  cat <<'EOF'
+Usage: forge-adapter <subcommand> [args...]
+
+Subcommands:
+  frontier-input <scope> <parent>
+      Print a JSON object in the shape lib/frontier-query expects, listing
+      <parent>'s open sub-issues via `forge task list --parent <parent>`.
+      Always emits the native shape (Forge always has task-native
+      parent/child + blocked-by data; there is no checklist fallback).
+
+  title <scope> <id>
+      Print a task's title.
+
+  claim <scope> <id>
+      Claim a task for the current user.
+
+  unclaim <scope> <id>
+      Release a task's assignee.
+
+  comment <scope> <id> <body>
+      Post a comment on a task.
+
+  close <scope> <id> [<closing-comment>]
+      Close a task, optionally posting a comment first.
+
+  label <scope> <id> <label>
+      Add a label to a task, creating the label first if it doesn't
+      already exist.
+
+  unlabel <scope> <id> <label>
+      Remove a label from a task (a no-op if the label isn't set).
+
+`<scope>` is accepted for interface parity with github-adapter but ignored
+-- forge derives its own project scope.
+EOF
+}
+
+fail() {
+  echo "Error: $1" >&2
+  usage >&2
+  exit 1
+}
+
+require_forge() {
+  command -v forge >/dev/null 2>&1 || fail "the \`forge\` CLI is required but was not found on PATH."
+}
+
+is_issue_number() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+# ---- frontier-input --------------------------------------------------------
+
+cmd_frontier_input() {
+  local scope="${1:-}" parent="${2:-}"
+  [[ -n "${scope}" && -n "${parent}" ]] || fail "frontier-input requires <scope> <parent>"
+  is_issue_number "${parent}" || fail "invalid parent issue number '${parent}'"
+
+  local children_raw
+  children_raw="$(forge task list --parent "${parent}" --json=id,title,status,labels,assignee,blocked_by)"
+
+  jq -c '{
+    shape: "native",
+    sub_issues: [
+      .[] | select(.status == "open") | {
+        number: .id,
+        blocked_by: ((.blocked_by // []) | map(select(.status == "open")) | length),
+        assignees: (if .assignee == null then [] else [.assignee] end),
+        labels: (.labels // [])
+      }
+    ]
+  }' <<<"${children_raw}"
+}
+
+# ---- remaining adapter operations -----------------------------------------
+
+cmd_title() {
+  local scope="${1:-}" id="${2:-}"
+  [[ -n "${scope}" && -n "${id}" ]] || fail "title requires <scope> <id>"
+  is_issue_number "${id}" || fail "invalid issue number '${id}'"
+  forge task view "${id}" --json=title | jq -r '.title'
+}
+
+cmd_claim() {
+  local scope="${1:-}" id="${2:-}"
+  [[ -n "${scope}" && -n "${id}" ]] || fail "claim requires <scope> <id>"
+  is_issue_number "${id}" || fail "invalid issue number '${id}'"
+  forge task claim "${id}"
+}
+
+cmd_unclaim() {
+  local scope="${1:-}" id="${2:-}"
+  [[ -n "${scope}" && -n "${id}" ]] || fail "unclaim requires <scope> <id>"
+  is_issue_number "${id}" || fail "invalid issue number '${id}'"
+  forge task release "${id}"
+}
+
+cmd_comment() {
+  local scope="${1:-}" id="${2:-}" body="${3:-}"
+  [[ -n "${scope}" && -n "${id}" && -n "${body}" ]] || fail "comment requires <scope> <id> <body>"
+  is_issue_number "${id}" || fail "invalid issue number '${id}'"
+  forge task comment "${id}" "${body}"
+}
+
+cmd_close() {
+  local scope="${1:-}" id="${2:-}" body="${3:-}"
+  [[ -n "${scope}" && -n "${id}" ]] || fail "close requires <scope> <id> [<closing-comment>]"
+  is_issue_number "${id}" || fail "invalid issue number '${id}'"
+  if [[ -n "${body}" ]]; then
+    forge task comment "${id}" "${body}"
+  fi
+  forge task update "${id}" --status closed
+}
+
+cmd_label() {
+  local scope="${1:-}" id="${2:-}" label="${3:-}"
+  [[ -n "${scope}" && -n "${id}" && -n "${label}" ]] || fail "label requires <scope> <id> <label>"
+  is_issue_number "${id}" || fail "invalid issue number '${id}'"
+  forge task label "${id}" "${label}"
+}
+
+cmd_unlabel() {
+  local scope="${1:-}" id="${2:-}" label="${3:-}"
+  [[ -n "${scope}" && -n "${id}" && -n "${label}" ]] || fail "unlabel requires <scope> <id> <label>"
+  is_issue_number "${id}" || fail "invalid issue number '${id}'"
+  forge task unlabel "${id}" "${label}"
+}
+
+main() {
+  local sub="${1:-}"
+
+  if [[ -z "${sub}" ]]; then
+    usage >&2
+    exit 1
+  fi
+  if [[ "${sub}" == "-h" || "${sub}" == "--help" ]]; then
+    usage
+    exit 0
+  fi
+  shift
+
+  require_forge
+
+  case "${sub}" in
+    frontier-input) cmd_frontier_input "$@" ;;
+    title) cmd_title "$@" ;;
+    claim) cmd_claim "$@" ;;
+    unclaim) cmd_unclaim "$@" ;;
+    comment) cmd_comment "$@" ;;
+    close) cmd_close "$@" ;;
+    label) cmd_label "$@" ;;
+    unlabel) cmd_unlabel "$@" ;;
+    *) fail "unknown subcommand '${sub}'" ;;
+  esac
+}
+
+# Guarded so bats can `source` this file to unit-test pure helpers without
+# triggering a `forge` call.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
