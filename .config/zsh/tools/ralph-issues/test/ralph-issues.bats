@@ -2,6 +2,11 @@
 
 setup() {
   RALPH_ISSUES_BIN="${BATS_TEST_DIRNAME}/../bin/ralph-issues"
+  # This suite asserts real-git-worktree filesystem state (sibling
+  # .ralph-worktrees paths), so pin the backend explicitly -- `auto` would
+  # otherwise pick up `wt` on a dev machine that happens to have it on PATH.
+  # See lib/worktree's own test/worktree.bats for wt-backend coverage.
+  export RALPH_WORKTREE_BACKEND=git
 
   export GIT_FIXTURE_DIR
   # Resolve to the physical path (pwd -P) so it matches what

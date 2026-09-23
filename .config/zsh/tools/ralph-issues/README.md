@@ -201,7 +201,7 @@ out first.
 
 ## `lib/worktree`
 
-The only place `git worktree` is invoked from ralph-issues.
+The only place `git worktree` and `wt` are invoked from ralph-issues.
 
 ```sh
 worktree create <repo-root> <issue-number> [<base-ref>]  # -> worktree path
@@ -227,9 +227,32 @@ worktree at `...ralph-worktrees/parent-<n>-integration`) that
 `lib/sub-issue-pipeline` merges each verified sub-issue's branch into.
 
 All five subcommands above route through an internal backend seam selected
-by `RALPH_WORKTREE_BACKEND` (`git`, `wt`, or `auto`; default `auto`). Today
-`auto` resolves only to the `git` backend described above — no `wt` backend
-exists yet.
+by `RALPH_WORKTREE_BACKEND` (`git`, `wt`, or `auto`; default `auto`). `auto`
+selects the `wt` backend when `wt` is on `PATH`, falling back to the `git`
+backend described above otherwise.
+
+The `wt` backend behaves exactly as an interactive `wt` user would, with one
+deliberate carve-out for `discard`:
+
+- `create` / `create-integration` check whether the target branch already
+  exists (via `wt list --branches --format json`). If it doesn't, `wt switch
+  --create <branch> --base <base-ref> --no-cd --format json` creates it; if
+  it does, a plain `wt switch <branch> --no-cd --format json` reuses its
+  worktree (or creates one for the existing, worktree-less branch), ignoring
+  `<base-ref>`. The worktree path is read from `.path` in `wt`'s JSON on
+  stdout — `wt` owns the path via its own template, `lib/worktree` only
+  reports it.
+- `discard` runs `wt remove --no-delete-branch --foreground` — the one
+  carve-out from default `wt remove` behavior, so a just-merged branch
+  survives and removal stays synchronous, while `wt`'s `pre-remove`/
+  `post-remove` hooks still run. A no-op when no worktree exists for the
+  branch.
+- `path` / `integration-path` error clearly under the `wt` backend, since
+  the path isn't predictable before creation.
+- `wt` is never invoked with `--yes`, so its approval prompts surface to the
+  user. `wt switch` additionally always passes `--no-cd`, so no caller's cwd
+  is disturbed (`WORKTRUNK_DIRECTIVE_CD_FILE` is never set); `wt list` and
+  `wt remove` never change the shell's cwd regardless.
 
 ## `lib/github-adapter`
 
