@@ -3,6 +3,11 @@
 setup() {
   PIPELINE="${BATS_TEST_DIRNAME}/../lib/sub-issue-pipeline"
   WORKTREE="${BATS_TEST_DIRNAME}/../lib/worktree"
+  # This suite asserts real-git-worktree filesystem state, so pin the
+  # backend explicitly -- `auto` would otherwise pick up `wt` on a dev
+  # machine that happens to have it on PATH. See lib/worktree's own
+  # test/worktree.bats for wt-backend coverage.
+  export RALPH_WORKTREE_BACKEND=git
 
   GIT_FIXTURE_DIR="$(cd "$(mktemp -d)" && pwd -P)/some-repo"
   mkdir -p "${GIT_FIXTURE_DIR}"
