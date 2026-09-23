@@ -206,3 +206,27 @@ teardown() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"parent issue number"* ]]
 }
+
+# RALPH_WORKTREE_BACKEND: selects the backend the five lifecycle/query
+# subcommands route through. `auto` (the default) currently resolves to
+# `git`, since no `wt` backend exists yet.
+
+@test "backend: RALPH_WORKTREE_BACKEND=auto (default) behaves like the git backend" {
+  run env -u RALPH_WORKTREE_BACKEND "${WORKTREE}" path "${REPO_DIR}" 42
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(dirname "${REPO_DIR}")/some-repo.ralph-worktrees/issue-42" ]
+}
+
+@test "backend: RALPH_WORKTREE_BACKEND=wt fails clearly since no wt backend exists yet" {
+  run env RALPH_WORKTREE_BACKEND=wt "${WORKTREE}" path "${REPO_DIR}" 42
+
+  [ "$status" -ne 0 ]
+}
+
+@test "backend: RALPH_WORKTREE_BACKEND with an invalid value fails clearly" {
+  run env RALPH_WORKTREE_BACKEND=bogus "${WORKTREE}" path "${REPO_DIR}" 42
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"RALPH_WORKTREE_BACKEND"* ]]
+}

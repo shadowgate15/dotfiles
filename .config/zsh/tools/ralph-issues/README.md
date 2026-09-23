@@ -226,6 +226,11 @@ branch (`ralph-issues/parent-<n>-integration`, in a persistent sibling
 worktree at `...ralph-worktrees/parent-<n>-integration`) that
 `lib/sub-issue-pipeline` merges each verified sub-issue's branch into.
 
+All five subcommands above route through an internal backend seam selected
+by `RALPH_WORKTREE_BACKEND` (`git`, `wt`, or `auto`; default `auto`). Today
+`auto` resolves only to the `git` backend described above — no `wt` backend
+exists yet.
+
 ## `lib/github-adapter`
 
 The only place `gh` is invoked from ralph-issues. Orchestration code (the
