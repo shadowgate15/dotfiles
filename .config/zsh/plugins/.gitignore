@@ -1,1 +1,2 @@
 *.zsh
+!tmux.plugins.zsh
